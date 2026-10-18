@@ -31,6 +31,22 @@ mkdir -p "$INSTALL_DIR"
 install -m 0755 "$BUILT" "$INSTALL_DIR/$BINARY_NAME"
 echo "Installed: $INSTALL_DIR/$BINARY_NAME"
 
+# macOS ties the Accessibility permission to the code signature. An ad-hoc signed binary
+# gets a new identity on every build, so the permission is lost after each update.
+# Signing with a real certificate (e.g. "Apple Development" from Xcode) keeps it.
+IDENTITY="${LOGIC_GROOVE_SIGN_IDENTITY:-}"
+if [[ -z "$IDENTITY" ]]; then
+    IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+        | sed -n 's/.*"\(Apple Development[^"]*\)".*/\1/p' | head -1)
+fi
+if [[ -n "$IDENTITY" ]]; then
+    codesign --force --sign "$IDENTITY" --identifier ro.goldenlobster.logic-groove-mcp \
+        "$INSTALL_DIR/$BINARY_NAME" && echo "Signed with: $IDENTITY (Accessibility permission survives updates)"
+else
+    echo "NOTE: no code-signing certificate found; after each update re-add $BINARY_NAME in"
+    echo "      System Settings > Privacy & Security > Accessibility (remove it, then add it again)."
+fi
+
 # Register with the Claude desktop app: merge into the existing config, keep a backup.
 mkdir -p "$(dirname "$CONFIG")"
 [[ -f "$CONFIG" ]] || echo '{}' > "$CONFIG"
