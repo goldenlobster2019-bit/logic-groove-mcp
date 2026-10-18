@@ -17,7 +17,7 @@ struct MixerDispatcher {
             set_master_volume -> { value: Float }; \
             toggle_eq -> { track: Int }; \
             reset_strip -> { track: Int }; \
-            insert_plugin -> { track: Int, slot: Int (0 or "instrument" = instrument slot, 1+ = audio effect slot), \
+            insert_plugin -> { track?: Int (omit = currently selected track, recommended), slot: Int (0 or "instrument" = instrument slot, 1+ = audio effect slot), \
             name: String, close_window?: Bool (default true) } (drives the Inspector channel strip via \
             Accessibility; returns undo_label so you can verify and undo); \
             bypass_plugin -> { track: Int, slot: Int, bypassed: Bool }
@@ -116,7 +116,8 @@ struct MixerDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "insert_plugin":
-            let track = params["track"]?.intValue ?? params["track_index"]?.intValue ?? 0
+            // No track -> act on the currently selected track (recommended: select it first).
+            let track = params["track"]?.intValue ?? params["track_index"]?.intValue ?? -1
             let slot = params["slot"]?.intValue ?? 0
             let name = params["name"]?.stringValue ?? params["plugin_name"]?.stringValue ?? ""
             var insertParams = ["track_index": String(track), "plugin_name": name, "slot": String(slot)]
@@ -139,7 +140,8 @@ struct MixerDispatcher {
             return CallTool.Result(content: [.text(encodeJSON(payload))], isError: !result.isSuccess)
 
         case "bypass_plugin":
-            let track = params["track"]?.intValue ?? params["track_index"]?.intValue ?? 0
+            // No track -> act on the currently selected track (recommended: select it first).
+            let track = params["track"]?.intValue ?? params["track_index"]?.intValue ?? -1
             let slot = params["slot"]?.intValue ?? 0
             let bypassed = params["bypassed"]?.boolValue ?? true
             let result = await router.route(

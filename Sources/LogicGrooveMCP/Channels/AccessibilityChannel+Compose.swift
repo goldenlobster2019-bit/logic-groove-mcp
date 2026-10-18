@@ -161,9 +161,10 @@ extension AccessibilityChannel {
     // MARK: - Plugin insertion
 
     func insertPlugin(params: [String: String]) async -> ChannelResult {
-        guard let trackText = params["track_index"], let trackIndex = Int(trackText) else {
-            return .error("Missing or invalid 'track_index' parameter")
-        }
+        // track_index -1 (or absent) = use the track that is already selected. Verified on
+        // Logic Pro 11: AXPress on a track header does not reliably change the selection,
+        // so the safest flow is "select the track/region first, then insert".
+        let trackIndex = Int(params["track_index"] ?? "-1") ?? -1
         let pluginName = (params["plugin_name"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !pluginName.isEmpty else {
             return .error("Missing 'plugin_name' parameter")
@@ -179,11 +180,13 @@ extension AccessibilityChannel {
         }
         let closeWindow = (params["close_window"] ?? "true").lowercased() != "false"
 
-        let selected = selectTrack(params: ["index": String(trackIndex)])
-        if case .error = selected {
-            return selected
+        if trackIndex >= 0 {
+            let selected = selectTrack(params: ["index": String(trackIndex)])
+            if case .error = selected {
+                return selected
+            }
+            guard await FilePanelAutomation.pause(ms: 300) else { return .error("Cancelled") }
         }
-        guard await FilePanelAutomation.pause(ms: 300) else { return .error("Cancelled") }
 
         // Make sure the Inspector (and with it the channel strip) is visible.
         var strip = AXLogicProElements.inspectorChannelStrip()
@@ -200,16 +203,7 @@ extension AccessibilityChannel {
 
         // Locate the slot control.
         let candidates = AXLogicProElements.slotCandidates(in: channelStrip)
-        let target: AXUIElement?
-        if slot == 0 {
-            target = candidates.first(where: { AXLogicProElements.searchLabel(of: $0).contains("instrument") })
-        } else {
-            let effectSlots = candidates.filter { element in
-                let label = AXLogicProElements.searchLabel(of: element)
-                return label.contains("audio effect") || label.contains("audio fx") || label.contains("effect slot")
-            }
-            target = effectSlots.indices.contains(slot - 1) ? effectSlots[slot - 1] : nil
-        }
+        let target: AXUIElement? = AXLogicProElements.pluginSlotButton(slot: slot, candidates: candidates)
         guard let slotElement = target else {
             let kind = slot == 0 ? "instrument slot" : "audio effect slot \(slot)"
             return .error("Cannot find the \(kind) in the Inspector channel strip. Candidates seen (\(candidates.count)): \(AXLogicProElements.diagnostic(of: candidates))")

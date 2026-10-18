@@ -424,6 +424,49 @@ extension AXLogicProElements {
         }
     }
 
+    /// The button that opens the plug-in menu of a slot in the Inspector's first channel strip.
+    ///
+    /// Verified on Logic Pro 11 (AXDescription values, no titles): a loaded slot is a pair of
+    /// buttons on one row, "open" (opens the plug-in window) and "list" (opens the plug-in
+    /// menu); an empty audio effect slot is a single "audio plug-in" button; the MIDI FX slot
+    /// is "MIDI plug-in"; rows run top to bottom MIDI FX, instrument, audio FX. The second
+    /// strip in the Inspector (the output, e.g. Stereo Out) is excluded by x position.
+    static func pluginSlotButton(slot: Int, candidates: [AXUIElement]) -> AXUIElement? {
+        struct Item { let element: AXUIElement; let label: String; let frame: CGRect }
+        var items: [Item] = candidates.compactMap { element in
+            guard let rect = frame(of: element) else { return nil }
+            let label = (AXHelpers.getDescription(element) ?? AXHelpers.getTitle(element) ?? "").lowercased()
+            return Item(element: element, label: label, frame: rect)
+        }
+        guard !items.isEmpty else { return nil }
+        // Keep only the first (leftmost) strip.
+        let anchorX = items.first(where: { $0.label == "midi plug-in" })?.frame.minX
+            ?? items.map { $0.frame.minX }.min() ?? 0
+        items = items.filter { $0.frame.minX < anchorX + 60 }
+
+        func sameRow(_ a: CGRect, _ b: CGRect) -> Bool { abs(a.midY - b.midY) < 4 }
+        // Rows that hold a plug-in: loaded ("open" + "list") or empty audio FX ("audio plug-in").
+        var rows: [(y: CGFloat, menuButton: AXUIElement)] = []
+        for open in items where open.label == "open" {
+            if let list = items.first(where: { $0.label == "list" && sameRow($0.frame, open.frame) && $0.frame.minX > open.frame.minX }) {
+                rows.append((open.frame.midY, list.element))
+            }
+        }
+        for empty in items where empty.label == "audio plug-in" || empty.label == "instrument plug-in" {
+            rows.append((empty.frame.midY, empty.element))
+        }
+        rows.sort { $0.y < $1.y }
+        let midiY = items.first(where: { $0.label == "midi plug-in" })?.frame.midY ?? -CGFloat.greatestFiniteMagnitude
+        let belowMidi = rows.filter { $0.y > midiY }
+        if slot == 0 {
+            if let first = belowMidi.first { return first.menuButton }
+            return candidates.first { searchLabel(of: $0).contains("instrument") }
+        }
+        // Audio effect slots come after the instrument row.
+        let effects = Array(belowMidi.dropFirst())
+        return effects.indices.contains(slot - 1) ? effects[slot - 1].menuButton : nil
+    }
+
     /// Find a menu that has just opened: under the element, under the app, or in a window.
     static func openedMenu(near element: AXUIElement) -> AXUIElement? {
         if let menu = AXHelpers.findChild(of: element, role: kAXMenuRole) {
