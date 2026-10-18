@@ -6,7 +6,7 @@ struct SystemDispatcher {
         name: "logic_system",
         description: """
             Diagnostics and help for the Logic Groove MCP server. \
-            Commands: health, permissions, refresh_cache, help. \
+            Commands: health, permissions, refresh_cache, debug_windows, help. \
             Params by command: \
             help -> { category: String } (returns full param docs for a dispatcher); \
             refresh_cache -> {} (force AX re-poll); \
@@ -69,6 +69,10 @@ struct SystemDispatcher {
             let status = PermissionChecker.check()
             return CallTool.Result(content: [.text(status.summary)], isError: false)
 
+        case "debug_windows":
+            let lines = AXLogicProElements.debugWindowSummary()
+            return CallTool.Result(content: [.text(lines.joined(separator: "\n"))], isError: false)
+
         case "refresh_cache":
             await cache.recordToolAccess()
             return CallTool.Result(
@@ -83,7 +87,7 @@ struct SystemDispatcher {
 
         default:
             return CallTool.Result(
-                content: [.text("Unknown system command: \(command). Available: health, permissions, refresh_cache, help")],
+                content: [.text("Unknown system command: \(command). Available: health, permissions, refresh_cache, debug_windows, help")],
                 isError: true
             )
         }

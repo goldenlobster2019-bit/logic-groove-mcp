@@ -95,27 +95,72 @@ extension AXLogicProElements {
         return mainWindow()
     }
 
-    /// The open / save panel if one is showing: a sheet, an AXDialog window,
-    /// or a non-main window titled Import / Open / Save / Export.
+    /// Windows to inspect for dialogs: every AX window plus the focused and main
+    /// windows (a sandboxed Open/Save panel is not always listed in kAXWindows).
+    static func dialogCandidates() -> [AXUIElement] {
+        var result = allWindows()
+        if let app = appRoot() {
+            if let focused: AXUIElement = AXHelpers.getAttribute(app, kAXFocusedWindowAttribute) {
+                result.append(focused)
+            }
+            if let main: AXUIElement = AXHelpers.getAttribute(app, kAXMainWindowAttribute) {
+                result.append(main)
+            }
+        }
+        return result
+    }
+
+    /// True when the container looks like an Open/Save/Import panel: it has a
+    /// Cancel button and a Save / Open / Import / Export / Choose button.
+    static func looksLikeFilePanel(_ container: AXUIElement) -> Bool {
+        let titles = AXHelpers.findAllDescendants(of: container, role: kAXButtonRole, maxDepth: 12)
+            .compactMap { AXHelpers.getTitle($0)?.lowercased() }
+        let hasCancel = titles.contains("cancel")
+        let hasConfirm = titles.contains { ["save", "open", "import", "export", "choose"].contains($0) }
+        return hasCancel && hasConfirm
+    }
+
+    /// The open / save panel if one is showing: a sheet, an AXDialog window, a window
+    /// titled Import / Open / Save / Export, or any non-project window that has
+    /// Cancel + Save/Open/Import buttons.
+    /// Verified on Logic Pro 11: the panel is a standalone window ("Save MIDI File as:")
+    /// that becomes AXMainWindow while it is up, so it must NOT be skipped as "main";
+    /// project windows are recognised by ".logicx" in their title instead.
     static func filePanel() -> AXUIElement? {
-        for window in allWindows() {
+        for window in dialogCandidates() {
             let sheets = AXHelpers.findAllDescendants(of: window, role: kAXSheetRole, maxDepth: 6)
             if let sheet = sheets.first { return sheet }
-            // Verified on Logic Pro 11: the Open/Save panel is a standalone window
-            // ("Save MIDI File as:") that becomes the app's AXMainWindow while it is up,
-            // so it must NOT be skipped as "main". Skip project windows instead.
-            let windowTitle = AXHelpers.getTitle(window) ?? ""
-            if windowTitle.lowercased().contains(".logicx") { continue }
+            let title = (AXHelpers.getTitle(window) ?? "").lowercased()
+            if title.contains(".logicx") { continue }
             let subrole: String? = AXHelpers.getAttribute(window, kAXSubroleAttribute)
             if subrole == kAXDialogSubrole || subrole == kAXSystemDialogSubrole {
                 return window
             }
-            let title = (AXHelpers.getTitle(window) ?? "").lowercased()
             if title.contains("import") || title.contains("open") || title.contains("save") || title.contains("export") {
                 return window
             }
+            if looksLikeFilePanel(window) { return window }
         }
         return nil
+    }
+
+    /// Diagnostic: one line per candidate window (role, subrole, title, button titles),
+    /// plus whether filePanel() finds a panel. Used by logic_system debug_windows.
+    static func debugWindowSummary() -> [String] {
+        var lines: [String] = []
+        if appRoot() == nil { return ["Logic Pro AX root not available"] }
+        lines.append("kAXWindows count: \(allWindows().count)")
+        for (index, window) in dialogCandidates().enumerated() {
+            let role = AXHelpers.getRole(window) ?? "?"
+            let subrole: String = AXHelpers.getAttribute(window, kAXSubroleAttribute) ?? "-"
+            let title = AXHelpers.getTitle(window) ?? "(nil)"
+            let buttons = AXHelpers.findAllDescendants(of: window, role: kAXButtonRole, maxDepth: 12)
+                .compactMap { AXHelpers.getTitle($0) }.filter { !$0.isEmpty }.prefix(12)
+            let sheets = AXHelpers.findAllDescendants(of: window, role: kAXSheetRole, maxDepth: 6).count
+            lines.append("#\(index) role=\(role) subrole=\(subrole) title=\"\(title)\" sheets=\(sheets) buttons=\(buttons.joined(separator: "|"))")
+        }
+        lines.append("filePanel(): \(filePanel() == nil ? "not found" : "FOUND")")
+        return lines
     }
 
     /// Texts (static text values and descriptions) inside a container, lowercased and joined.
