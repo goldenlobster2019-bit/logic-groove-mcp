@@ -46,6 +46,47 @@ enum FilePanelAutomation {
         return true
     }
 
+    /// Post a key to the HID event tap (the frontmost app). Logic's Open/Save panels are
+    /// hosted out of process, so keys meant for them must go to whatever is frontmost,
+    /// not to Logic's pid. Callers must ensureFrontmost() first.
+    static func postKeyGlobal(_ keyCode: CGKeyCode, flags: CGEventFlags) -> Bool {
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+            return false
+        }
+        keyDown.flags = flags
+        keyUp.flags = flags
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+        return true
+    }
+
+    /// Type text to the frontmost app in chunks. A single unicode CGEvent carries at most
+    /// ~20 UTF-16 units (the rest is silently dropped), so long paths must be split.
+    static func typeTextGlobal(_ text: String) async -> Bool {
+        let units = Array(text.utf16)
+        var index = 0
+        while index < units.count {
+            let end = min(index + 16, units.count)
+            let chunk = Array(units[index..<end])
+            guard let source = CGEventSource(stateID: .hidSystemState),
+                  let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+                return false
+            }
+            chunk.withUnsafeBufferPointer { buffer in
+                keyDown.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
+                keyUp.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
+            }
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+            index = end
+            guard await pause(ms: 20) else { return false }
+        }
+        return true
+    }
+
     /// Type a string with a unicode CGEvent (same approach as CGEventChannel.postText).
     static func postText(_ text: String, pid: pid_t) -> Bool {
         guard let source = CGEventSource(stateID: .hidSystemState),
@@ -97,45 +138,42 @@ enum FilePanelAutomation {
     /// With a panel showing: Cmd+Shift+G, enter `path`, Return.
     /// `path` may be a folder or a file. Returns nil on success, otherwise an error message.
     static func goTo(path: String, pid: pid_t) async -> String? {
+        // Verified on Logic Pro 11 / macOS 15: Cmd+Shift+G opens a "Go to" sheet inside the
+        // panel. Setting its AXValue is ignored (Return then uses the pre-filled, previous
+        // path), so the path is TYPED. Typing a file path selects that file in an Open panel.
         guard await ensureFrontmost() else {
             return "Could not bring Logic Pro to the front"
         }
         let sheetsBefore = AXLogicProElements.allSheets().count
-        let focusBefore = AXLogicProElements.focusedElement()
-
-        guard postKey(5, flags: [.maskCommand, .maskShift], pid: pid) else {
+        guard postKeyGlobal(5, flags: [.maskCommand, .maskShift]) else {
             return "Failed to post Cmd+Shift+G"
         }
-
-        // Wait for the "Go to the folder" field.
         var waited = 0
-        var fieldFound = false
-        var set = false
+        var sheetAppeared = false
         while waited <= 3_000 {
             guard await pause(ms: 100) else { return "Cancelled" }
             waited += 100
-            if let field = AXLogicProElements.goToFolderField(sheetCountBefore: sheetsBefore, focusBefore: focusBefore) {
-                fieldFound = true
-                set = AXHelpers.setAttribute(field, kAXValueAttribute, path as CFTypeRef)
-                break
-            }
+            if AXLogicProElements.allSheets().count > sheetsBefore { sheetAppeared = true; break }
         }
-
-        if !set {
-            // Fallback: type the path into whatever has focus (the go-to field after Cmd+Shift+G).
-            Log.warn(
-                "Go-to field \(fieldFound ? "rejected AX value" : "not found"); typing path instead",
-                subsystem: "ax"
-            )
-            guard await ensureFrontmost() else { return "Could not bring Logic Pro to the front" }
-            _ = postKey(0, flags: .maskCommand, pid: pid) // select any existing text
-            guard postText(path, pid: pid) else { return "Failed to type the path" }
+        if !sheetAppeared {
+            Log.warn("Go to sheet not detected after Cmd+Shift+G; typing anyway", subsystem: "ax")
         }
-
-        guard await pause(ms: 250) else { return "Cancelled" }
+        guard await pause(ms: 200) else { return "Cancelled" }
         guard await ensureFrontmost() else { return "Could not bring Logic Pro to the front" }
-        guard postKey(36, flags: [], pid: pid) else { return "Failed to press Return in Go to Folder" }
-        guard await pause(ms: 400) else { return "Cancelled" }
+        _ = postKeyGlobal(0, flags: .maskCommand) // select the pre-filled path
+        guard await pause(ms: 80) else { return "Cancelled" }
+        guard await typeTextGlobal(path) else { return "Failed to type the path" }
+        guard await pause(ms: 500) else { return "Cancelled" } // let the suggestion list update
+        guard await ensureFrontmost() else { return "Could not bring Logic Pro to the front" }
+        guard postKeyGlobal(36, flags: []) else { return "Failed to press Return in Go to Folder" }
+        // Wait for the sheet to close.
+        waited = 0
+        while waited <= 2_000 {
+            guard await pause(ms: 100) else { return "Cancelled" }
+            waited += 100
+            if AXLogicProElements.allSheets().count <= sheetsBefore { break }
+        }
+        guard await pause(ms: 300) else { return "Cancelled" }
         return nil
     }
 

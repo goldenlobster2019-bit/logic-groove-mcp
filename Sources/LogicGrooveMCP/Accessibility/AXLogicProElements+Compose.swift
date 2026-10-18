@@ -1,4 +1,5 @@
 import ApplicationServices
+import CoreGraphics
 import Foundation
 
 /// Outcome of trying to press a menu item.
@@ -510,7 +511,49 @@ extension AXLogicProElements {
                 return box
             }
         }
+        // Verified on Logic Pro 11: the Region inspector's Loop checkbox is UNTITLED; its
+        // "Loop:" caption is a separate static text on the same row. Match by row.
+        let labels = AXHelpers.findAllDescendants(of: window, role: kAXStaticTextRole, maxDepth: 14)
+            .filter { label in
+                let text = ((AXHelpers.getValue(label) as? String) ?? AXHelpers.getTitle(label) ?? "")
+                    .trimmingCharacters(in: .whitespaces).lowercased()
+                return text == "loop:" || text == "loop"
+            }
+        for label in labels {
+            guard let labelFrame = frame(of: label) else { continue }
+            var best: (box: AXUIElement, distance: CGFloat)?
+            for box in boxes where (AXHelpers.getTitle(box) ?? "").isEmpty {
+                guard let boxFrame = frame(of: box) else { continue }
+                let sameRow = abs(boxFrame.midY - labelFrame.midY) < 8
+                let toTheRight = boxFrame.minX >= labelFrame.minX
+                guard sameRow, toTheRight else { continue }
+                let distance = boxFrame.minX - labelFrame.maxX
+                if let current = best, current.distance <= distance { continue }
+                best = (box, distance)
+            }
+            if let best { return best.box }
+        }
         return nil
+    }
+
+    /// Screen frame of an element from kAXPosition/kAXSize, nil if unavailable.
+    static func frame(of element: AXUIElement) -> CGRect? {
+        var positionRef: AnyObject?
+        var sizeRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRef) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let positionValue = positionRef, let sizeValue = sizeRef,
+              CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              CFGetTypeID(sizeValue) == AXValueGetTypeID() else {
+            return nil
+        }
+        var point = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(unsafeBitCast(positionValue, to: AXValue.self), .cgPoint, &point),
+              AXValueGetValue(unsafeBitCast(sizeValue, to: AXValue.self), .cgSize, &size) else {
+            return nil
+        }
+        return CGRect(origin: point, size: size)
     }
 
     /// Integer value (0/1) of a checkbox, nil if unreadable.
