@@ -7,7 +7,7 @@ struct ComposeDispatcher {
         name: "logic_compose",
         description: """
             Generate, analyze and import MIDI for house, deep house and dub techno. \
-            Writes .mid files to ~/Music/LogicProMCP/Generated and imports them through \
+            Writes .mid files to ~/Music/LogicGrooveMCP/Generated and imports them through \
             Logic's File > Import > MIDI File menu (no pixel clicking). \
             Commands: styles, generate, analyze_region, analyze_file, complement, \
             import_midi, set_loop. \

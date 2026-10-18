@@ -1,20 +1,20 @@
 {
-  "name": "logic-pro-mcp",
-  "display_name": "Logic Pro MCP Server",
+  "name": "logic-groove-mcp",
+  "display_name": "Logic Groove MCP",
   "description": "Bidirectional, stateful control of Logic Pro from AI assistants. 9 dispatcher tools + 7 resources across 5 native macOS channels.",
   "version": "0.2.0",
-  "author": "Kolton Jacobs",
+  "author": "Golden Lobster Studio (Sorin Gheorghita); based on work by Kolton Jacobs",
   "license": "MIT",
-  "homepage": "https://github.com/koltyj/logic-pro-mcp",
-  "repository": "https://github.com/koltyj/logic-pro-mcp",
+  "homepage": "https://github.com/goldenlobster2019-bit/logic-groove-mcp",
+  "repository": "https://github.com/goldenlobster2019-bit/logic-groove-mcp",
   "platforms": ["macos"],
   "runtime": "native",
   "installation": {
     "macos": {
-      "command": "LogicProMCP",
+      "command": "LogicGrooveMCP",
       "args": [],
-      "download_url": "https://github.com/koltyj/logic-pro-mcp/releases/latest/download/LogicProMCP",
-      "install_path": "/usr/local/bin/LogicProMCP"
+      "download_url": "https://github.com/goldenlobster2019-bit/logic-groove-mcp/releases/latest/download/LogicGrooveMCP",
+      "install_path": "/usr/local/bin/LogicGrooveMCP"
     }
   },
   "permissions": [

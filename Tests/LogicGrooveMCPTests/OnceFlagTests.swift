@@ -1,6 +1,6 @@
 import os
 import XCTest
-@testable import LogicProMCP
+@testable import LogicGrooveMCP
 
 final class OnceFlagTests: XCTestCase {
     func testConsumesOnlyOnceAcrossConcurrentCalls() {

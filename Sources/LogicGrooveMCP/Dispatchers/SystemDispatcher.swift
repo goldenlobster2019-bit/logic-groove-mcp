@@ -5,7 +5,7 @@ struct SystemDispatcher {
     static let tool = Tool(
         name: "logic_system",
         description: """
-            Diagnostics and help for the Logic Pro MCP server. \
+            Diagnostics and help for the Logic Groove MCP server. \
             Commands: health, permissions, refresh_cache, help. \
             Params by command: \
             help -> { category: String } (returns full param docs for a dispatcher); \
@@ -220,8 +220,8 @@ struct SystemDispatcher {
                   import_midi       -> { path: String, at_bar?: Int, loop?: Bool }
                   set_loop          -> { enabled: Bool } — Region inspector Loop checkbox
 
-                Files go to ~/Music/LogicProMCP/Generated; region exports to
-                ~/Music/LogicProMCP/Exports. Import uses File > Import > MIDI File via
+                Files go to ~/Music/LogicGrooveMCP/Generated; region exports to
+                ~/Music/LogicGrooveMCP/Exports. Import uses File > Import > MIDI File via
                 Accessibility. Results include undo_label (the Edit menu's Undo title).
                 """
 
@@ -255,7 +255,7 @@ struct SystemDispatcher {
 
         default:
             return """
-                Logic Pro MCP — 9 dispatcher tools + 7 resources
+                Logic Groove MCP — 9 dispatcher tools + 7 resources
 
                 Tools (actions):
                   logic_transport  — Transport control (play, stop, record, tempo...)

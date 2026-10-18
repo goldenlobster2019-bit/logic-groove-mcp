@@ -2,21 +2,30 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  macos:
+    name: macOS build and test
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
 
       - name: Build
         run: swift build -c release
+
+      - name: Run tests
+        run: swift test
+
+  linux:
+    name: Linux test (MusicCore)
+    runs-on: ubuntu-latest
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@v7
 
       - name: Run tests
         run: swift test

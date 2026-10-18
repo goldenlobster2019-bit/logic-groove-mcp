@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import LogicProMCP
+@testable import LogicGrooveMCP
 
 final class ComposeSupportTests: XCTestCase {
     func testSanitizeFileName() {

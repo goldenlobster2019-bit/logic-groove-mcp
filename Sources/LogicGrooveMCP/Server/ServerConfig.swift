@@ -1,10 +1,10 @@
 import Foundation
 
-/// Central configuration for the Logic Pro MCP server.
+/// Central configuration for the Logic Groove MCP server.
 /// All tunables live here — ports, timeouts, poll intervals.
 struct ServerConfig: Sendable {
     // MARK: - Server Identity
-    static let serverName = "logic-pro-mcp"
+    static let serverName = "logic-groove-mcp"
     static let serverVersion = "0.2.0"
 
     // MARK: - OSC
@@ -13,8 +13,8 @@ struct ServerConfig: Sendable {
     static let oscHost = "127.0.0.1"
 
     // MARK: - MIDI
-    static let virtualMIDISourceName = "LogicProMCP-Out"
-    static let virtualMIDISinkName = "LogicProMCP-In"
+    static let virtualMIDISourceName = "LogicGrooveMCP-Out"
+    static let virtualMIDISinkName = "LogicGrooveMCP-In"
     /// MMC device ID (0x7F = all devices)
     static let mmcDeviceID: UInt8 = 0x7F
 

@@ -232,7 +232,7 @@ actor CoreMIDIChannel: Channel {
             return .success(await engine.portListJSON())
 
         case "midi.create_virtual_port":
-            let name = params["name"] ?? "LogicProMCP-Virtual"
+            let name = params["name"] ?? "LogicGrooveMCP-Virtual"
             do {
                 try await engine.createVirtualPort(named: name)
                 return .success("Virtual MIDI port created: \(name)")

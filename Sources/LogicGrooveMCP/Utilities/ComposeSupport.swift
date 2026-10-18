@@ -62,13 +62,13 @@ enum ComposeSupport {
     /// Directory for generated MIDI files (not created here).
     static func generatedDirectory() -> URL {
         let home = URL(fileURLWithPath: NSHomeDirectory())
-        return home.appendingPathComponent("Music/LogicProMCP/Generated", isDirectory: true)
+        return home.appendingPathComponent("Music/LogicGrooveMCP/Generated", isDirectory: true)
     }
 
     /// Directory for MIDI exported from Logic regions (not created here).
     static func exportsDirectory() -> URL {
         let home = URL(fileURLWithPath: NSHomeDirectory())
-        return home.appendingPathComponent("Music/LogicProMCP/Exports", isDirectory: true)
+        return home.appendingPathComponent("Music/LogicGrooveMCP/Exports", isDirectory: true)
     }
 
     /// "yyyyMMdd-HHmmss" in the local time zone.

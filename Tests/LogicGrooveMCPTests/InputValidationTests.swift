@@ -1,7 +1,7 @@
 import Foundation
 import MCP
 import XCTest
-@testable import LogicProMCP
+@testable import LogicGrooveMCP
 
 final class InputValidationTests: XCTestCase {
     func testNumericBounds() {

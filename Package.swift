@@ -23,16 +23,16 @@ var targets: [Target] = [
 var dependencies: [Package.Dependency] = []
 
 #if os(macOS)
-products.append(.executable(name: "LogicProMCP", targets: ["LogicProMCP"]))
+products.append(.executable(name: "LogicGrooveMCP", targets: ["LogicGrooveMCP"]))
 dependencies.append(.package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.1"))
 targets.append(contentsOf: [
     .executableTarget(
-        name: "LogicProMCP",
+        name: "LogicGrooveMCP",
         dependencies: [
             "MusicCore",
             .product(name: "MCP", package: "swift-sdk"),
         ],
-        path: "Sources/LogicProMCP",
+        path: "Sources/LogicGrooveMCP",
         linkerSettings: [
             .linkedFramework("CoreMIDI"),
             .linkedFramework("ApplicationServices"),
@@ -40,15 +40,15 @@ targets.append(contentsOf: [
         ]
     ),
     .testTarget(
-        name: "LogicProMCPTests",
-        dependencies: ["LogicProMCP"],
-        path: "Tests/LogicProMCPTests"
+        name: "LogicGrooveMCPTests",
+        dependencies: ["LogicGrooveMCP"],
+        path: "Tests/LogicGrooveMCPTests"
     ),
 ])
 #endif
 
 let package = Package(
-    name: "LogicProMCP",
+    name: "LogicGrooveMCP",
     platforms: [.macOS(.v14)],
     products: products,
     dependencies: dependencies,

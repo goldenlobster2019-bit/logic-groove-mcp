@@ -1,6 +1,6 @@
 import CoreMIDI
 import XCTest
-@testable import LogicProMCP
+@testable import LogicGrooveMCP
 
 final class CoreMIDIChannelTests: XCTestCase {
     func testCoreMIDIHandlesAdvertisedMIDIOperations() async throws {

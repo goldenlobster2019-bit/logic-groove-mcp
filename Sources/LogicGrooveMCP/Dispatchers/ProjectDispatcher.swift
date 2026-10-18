@@ -131,7 +131,7 @@ struct ProjectDispatcher {
         guard !process.isRunning else {
             process.terminate()
             throw NSError(
-                domain: "LogicProMCP.AppleScript",
+                domain: "LogicGrooveMCP.AppleScript",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "AppleScript timed out"]
             )

@@ -1,5 +1,5 @@
 import XCTest
-@testable import LogicProMCP
+@testable import LogicGrooveMCP
 
 final class PlaceholderTests: XCTestCase {
     func testAutomationPermissionStatus() {
