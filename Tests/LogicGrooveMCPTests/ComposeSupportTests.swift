@@ -15,6 +15,8 @@ final class ComposeSupportTests: XCTestCase {
     func testPositionStrings() {
         XCTAssertEqual(ComposeSupport.positionString(tick: 0), "1.1.1")
         XCTAssertEqual(ComposeSupport.positionString(tick: 240), "1.1.3")
+        XCTAssertEqual(ComposeSupport.positionString(tick: 236), "1.1.3")
+        XCTAssertEqual(ComposeSupport.positionString(tick: 1_915), "2.1.1")
         XCTAssertEqual(ComposeSupport.positionString(tick: 480), "1.2.1")
         XCTAssertEqual(ComposeSupport.positionString(tick: 1_920), "2.1.1")
         XCTAssertEqual(ComposeSupport.positionString(step16: 2), "1.1.3")

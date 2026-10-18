@@ -82,11 +82,12 @@ enum ComposeSupport {
     // MARK: - Positions
 
     /// Bar.beat.sixteenth (all 1-based) for a tick position, assuming 4/4 at 480 PPQ.
-    /// tick 0 -> "1.1.1", tick 240 -> "1.1.3".
+    /// tick 0 -> "1.1.1", tick 240 -> "1.1.3". Rounds to the NEAREST 16th, so a humanized
+    /// note a few ticks early (e.g. 236) still reads as "1.1.3", not "1.1.2".
     static func positionString(tick: Int, ppq: Int = 480, beatsPerBar: Int = 4) -> String {
-        let safeTick = max(0, tick)
         let ticksPerBeat = max(1, ppq)
         let ticksPerSixteenth = max(1, ppq / 4)
+        let safeTick = max(0, ((tick + ticksPerSixteenth / 2) / ticksPerSixteenth) * ticksPerSixteenth)
         let ticksPerBar = ticksPerBeat * max(1, beatsPerBar)
         let bar = safeTick / ticksPerBar + 1
         let beat = (safeTick % ticksPerBar) / ticksPerBeat + 1
