@@ -1,4 +1,5 @@
 import ApplicationServices
+import CoreGraphics
 import Foundation
 
 /// Menu-driven and panel-driven Accessibility operations used by logic_compose,
