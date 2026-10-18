@@ -76,22 +76,36 @@ extension AXLogicProElements {
     /// Windows other than the main project window, plus all sheets: candidates for alerts and dialogs.
     static func attentionContainers() -> [AXUIElement] {
         var result: [AXUIElement] = allSheets()
-        let main = mainWindow()
         for window in allWindows() {
-            if let main, CFEqual(window, main) { continue }
+            // Dialogs become AXMainWindow while they are up, so identify the project
+            // window by its title instead of skipping "main".
+            if (AXHelpers.getTitle(window) ?? "").lowercased().contains(".logicx") { continue }
             result.append(window)
         }
         return result
     }
 
+    /// The project (arrange) window: the window whose title contains ".logicx".
+    /// Falls back to AXMainWindow. Use this instead of mainWindow() for anything that
+    /// lives in the project window, because modal dialogs take over AXMainWindow.
+    static func projectWindow() -> AXUIElement? {
+        for window in allWindows() where (AXHelpers.getTitle(window) ?? "").lowercased().contains(".logicx") {
+            return window
+        }
+        return mainWindow()
+    }
+
     /// The open / save panel if one is showing: a sheet, an AXDialog window,
     /// or a non-main window titled Import / Open / Save / Export.
     static func filePanel() -> AXUIElement? {
-        let main = mainWindow()
         for window in allWindows() {
             let sheets = AXHelpers.findAllDescendants(of: window, role: kAXSheetRole, maxDepth: 6)
             if let sheet = sheets.first { return sheet }
-            if let main, CFEqual(window, main) { continue }
+            // Verified on Logic Pro 11: the Open/Save panel is a standalone window
+            // ("Save MIDI File as:") that becomes the app's AXMainWindow while it is up,
+            // so it must NOT be skipped as "main". Skip project windows instead.
+            let windowTitle = AXHelpers.getTitle(window) ?? ""
+            if windowTitle.lowercased().contains(".logicx") { continue }
             let subrole: String? = AXHelpers.getAttribute(window, kAXSubroleAttribute)
             if subrole == kAXDialogSubrole || subrole == kAXSystemDialogSubrole {
                 return window
@@ -346,7 +360,7 @@ extension AXLogicProElements {
 
     /// The Inspector's channel strip (first "Mixer" layout area in the main window).
     static func inspectorChannelStrip() -> AXUIElement? {
-        guard let window = mainWindow() else { return nil }
+        guard let window = projectWindow() else { return nil }
         if let strip = AXHelpers.findDescendant(
             of: window, role: "AXLayoutArea", description: "Mixer", maxDepth: 12
         ) {
@@ -442,7 +456,7 @@ extension AXLogicProElements {
 
     /// The "Loop" checkbox in the Region inspector.
     static func regionLoopCheckbox() -> AXUIElement? {
-        guard let window = mainWindow() else { return nil }
+        guard let window = projectWindow() else { return nil }
         let boxes = AXHelpers.findAllDescendants(of: window, role: kAXCheckBoxRole, maxDepth: 14)
         for box in boxes {
             let title = (AXHelpers.getTitle(box) ?? "").lowercased()

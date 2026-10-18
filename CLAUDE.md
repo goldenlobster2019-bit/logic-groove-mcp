@@ -55,6 +55,15 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 5. `6699f65` explicit CoreGraphics import (macOS compile fix).
 6. Rename to Logic Groove MCP (package, targets, ServerConfig name "logic-groove-mcp", MIDI port names, manifest, installer, release, CODEOWNERS, SECURITY, license line), Linux CI job, README rewrite, this file, docs/SKILL.md.
 
+## Verified on a real Mac (Logic Pro 11, 2026-10-18)
+
+- Server starts from the Claude desktop app; needs Accessibility for the binary (~/.local/bin/LogicGrooveMCP).
+- generate (import=false), analyze_file, styles: work. Real stab analyzed as F minor, Fm(add9)/Fm.
+- Menu "File > Export > Selection as MIDI File…" exists with that exact title.
+- The Open/Save panel is a standalone window titled "Save MIDI File as:" that becomes AXMainWindow; name field = first AXTextField (search field has subrole AXSearchField); buttons "Save"/"Cancel"; Cmd+Shift+G opens a go-to sheet that accepts "~/..." paths.
+- Fixed: filePanel()/attentionContainers() skipped the main window, so the panel was never found. Use projectWindow() (title contains ".logicx") for project-window lookups.
+- AXPress on a region (AXLayoutItem) does NOT select it; a real click does. Region selection is still manual or via screen click.
+
 ## Known issues and unverified assumptions
 
 - Menu titles are matched in English (Logic Pro 11); other languages or versions untested.
