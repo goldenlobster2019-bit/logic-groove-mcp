@@ -1,8 +1,8 @@
 {
   "name": "logic-pro-mcp",
   "display_name": "Logic Pro MCP Server",
-  "description": "Bidirectional, stateful control of Logic Pro from AI assistants. 8 dispatcher tools + 7 resources across 5 native macOS channels.",
-  "version": "0.1.0",
+  "description": "Bidirectional, stateful control of Logic Pro from AI assistants. 9 dispatcher tools + 7 resources across 5 native macOS channels.",
+  "version": "0.2.0",
   "author": "Kolton Jacobs",
   "license": "MIT",
   "homepage": "https://github.com/koltyj/logic-pro-mcp",
@@ -28,6 +28,7 @@
     "logic_midi",
     "logic_edit",
     "logic_navigate",
+    "logic_compose",
     "logic_project",
     "logic_system"
   ],

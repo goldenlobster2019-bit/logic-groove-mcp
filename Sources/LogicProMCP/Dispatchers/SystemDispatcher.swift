@@ -142,7 +142,9 @@ struct SystemDispatcher {
                   set_master_volume -> { value: Float }
                   toggle_eq         -> { track: Int }
                   reset_strip       -> { track: Int }
-                  insert_plugin     -> { track: Int, slot: Int, name: String }
+                  insert_plugin     -> { track: Int, slot: Int (0/"instrument" = instrument,
+                                       1+ = audio effect slot), name: String, close_window?: Bool }
+                                       Result includes undo_label.
                   bypass_plugin     -> { track: Int, slot: Int, bypassed: Bool }
 
                 Read state via resource: logic://mixer
@@ -183,6 +185,7 @@ struct SystemDispatcher {
                   bounce_in_place   -> {} — Bounce selection to audio
                   normalize         -> {} — Normalize audio
                   duplicate         -> {} — Duplicate selection
+                  last_undo         -> {} — Read the Edit menu's Undo title (presses nothing)
                 """
 
         case "navigate":
@@ -197,6 +200,29 @@ struct SystemDispatcher {
                   set_zoom          -> { level: String } ("in", "out", "fit")
                   toggle_view       -> { view: String } (mixer, piano_roll, score,
                                        step_editor, library, inspector, automation)
+                  refresh_editor    -> {} — Close + reopen the editor so it follows the selected region
+                  open_piano_roll   -> {} — Window > Open Piano Roll
+                """
+
+        case "compose":
+            return """
+                logic_compose commands (house, deep_house, dub_techno):
+                  styles            -> { genre?: String, part?: String } — Available styles
+                  generate          -> { genre, part, key?, scale?, bars? (1-64, default 4), style?,
+                                       density? (0-1), swing? (0-1), humanize? (0-1), octave?, seed?,
+                                       name?, import? (default true), at_bar? (default 1),
+                                       loop? (default false), tempo? }
+                                       part: drums, kick, hats, bass, stabs, chords, pad.
+                                       Seed is always echoed back so a clip can be reproduced.
+                  analyze_region    -> {} — Export the selected MIDI region and analyze it
+                  analyze_file      -> { path: String } — Analyze an existing .mid file
+                  complement        -> same params as generate; fits the selected region
+                  import_midi       -> { path: String, at_bar?: Int, loop?: Bool }
+                  set_loop          -> { enabled: Bool } — Region inspector Loop checkbox
+
+                Files go to ~/Music/LogicProMCP/Generated; region exports to
+                ~/Music/LogicProMCP/Exports. Import uses File > Import > MIDI File via
+                Accessibility. Results include undo_label (the Edit menu's Undo title).
                 """
 
         case "project":
@@ -222,14 +248,14 @@ struct SystemDispatcher {
                   refresh_cache     -> {} — Force AX re-poll
                   help              -> { category: String } — Param docs per category
 
-                Categories: transport, tracks, mixer, midi, edit, navigate, project, system
+                Categories: transport, tracks, mixer, midi, edit, navigate, project, compose, system
 
                 Read health via resource: logic://system/health
                 """
 
         default:
             return """
-                Logic Pro MCP — 8 dispatcher tools + 7 resources
+                Logic Pro MCP — 9 dispatcher tools + 7 resources
 
                 Tools (actions):
                   logic_transport  — Transport control (play, stop, record, tempo...)
@@ -239,6 +265,7 @@ struct SystemDispatcher {
                   logic_edit       — Editing (undo, cut, quantize...)
                   logic_navigate   — Navigation + views (markers, zoom, toggle views...)
                   logic_project    — Project lifecycle (open, save, bounce...)
+                  logic_compose    — Generate/analyze/import MIDI (house, deep house, dub techno)
                   logic_system     — Diagnostics + help
 
                 Resources (reads — zero tool cost):

@@ -2,7 +2,7 @@ import Foundation
 import MCP
 
 /// Main MCP server for Logic Pro integration.
-/// Exposes 8 dispatcher tools + 7 resources, routing through
+/// Exposes 9 dispatcher tools + 7 resources, routing through
 /// the ChannelRouter to the appropriate macOS communication channel.
 actor LogicProServer {
     private let server: Server
@@ -45,7 +45,7 @@ actor LogicProServer {
         self.poller = StatePoller(axChannel: axChannel, cache: cache)
     }
 
-    // MARK: - Tool Registration (8 dispatchers)
+    // MARK: - Tool Registration (9 dispatchers)
 
     private func registerTools() async {
         let allTools: [Tool] = [
@@ -56,6 +56,7 @@ actor LogicProServer {
             EditDispatcher.tool,
             NavigateDispatcher.tool,
             ProjectDispatcher.tool,
+            ComposeDispatcher.tool,
             SystemDispatcher.tool,
         ]
 
@@ -110,6 +111,11 @@ actor LogicProServer {
                     command: command, params: cmdParams, router: router, cache: cache
                 )
 
+            case "logic_compose":
+                return await ComposeDispatcher.handle(
+                    command: command, params: cmdParams, router: router, cache: cache
+                )
+
             case "logic_system":
                 return await SystemDispatcher.handle(
                     command: command, params: cmdParams, router: router, cache: cache
@@ -117,7 +123,7 @@ actor LogicProServer {
 
             default:
                 return CallTool.Result(
-                    content: [.text("Unknown tool: \(name). Available: logic_transport, logic_tracks, logic_mixer, logic_midi, logic_edit, logic_navigate, logic_project, logic_system")],
+                    content: [.text("Unknown tool: \(name). Available: logic_transport, logic_tracks, logic_mixer, logic_midi, logic_edit, logic_navigate, logic_project, logic_compose, logic_system")],
                     isError: true
                 )
             }
@@ -169,7 +175,7 @@ actor LogicProServer {
         await registerResources()
 
         Log.info(
-            "Starting \(ServerConfig.serverName) v\(ServerConfig.serverVersion) — 8 tools, 7 resources",
+            "Starting \(ServerConfig.serverName) v\(ServerConfig.serverVersion) — 9 tools, 7 resources",
             subsystem: "server"
         )
 

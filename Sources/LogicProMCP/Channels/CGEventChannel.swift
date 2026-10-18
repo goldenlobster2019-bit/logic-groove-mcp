@@ -35,16 +35,25 @@ actor CGEventChannel: Channel {
         static func cmdOption(_ code: CGKeyCode) -> Shortcut {
             Shortcut(keyCode: code, flags: [.maskCommand, .maskAlternate])
         }
+
+        /// Numeric keypad key: real keypad events carry the numeric-pad flag.
+        static func keypad(_ code: CGKeyCode) -> Shortcut {
+            Shortcut(keyCode: code, flags: .maskNumericPad)
+        }
     }
 
     /// Mapping from operation strings to keyboard shortcuts.
     /// Key codes: https://developer.apple.com/documentation/coregraphics/cgkeycode
     private static let keyMap: [String: Shortcut] = [
         // Transport
-        "transport.play":             .key(49),         // Space
-        "transport.stop":             .key(49),         // Space (toggles)
+        // Space is Logic's Play/Pause TOGGLE: sent while stopped it STARTS playback,
+        // so it must never be used for "stop". Logic's default key commands have
+        // dedicated, non-toggling keys: Stop = keypad 0, Play = keypad Enter.
+        // (The user may have remapped them; the CoreMIDI MMC path is tried first anyway.)
+        "transport.play":             .keypad(76),      // Keypad Enter (Logic default "Play")
+        "transport.stop":             .keypad(82),      // Keypad 0 (Logic default "Stop")
         "transport.record":           .key(15),         // R
-        "transport.pause":            .key(49),         // Space
+        "transport.pause":            .key(49),         // Space (Play/Pause toggle)
         "transport.rewind":           .key(123),        // Left arrow
         "transport.fast_forward":     .key(124),        // Right arrow
         "transport.toggle_cycle":     .key(8),          // C
@@ -75,9 +84,12 @@ actor CGEventChannel: Channel {
         "project.close":              .cmd(13),         // Cmd+W
 
         // Track creation
-        "track.create_audio":         .cmdOption(0),    // Option+Cmd+A (approximate)
-        "track.create_instrument":    .cmdOption(1),    // Option+Cmd+S (approximate)
-        "track.create_drummer":       .cmdOption(6),    // (approximate)
+        // Logic defaults: Option+Cmd+A audio, Option+Cmd+S software instrument,
+        // Option+Cmd+X external MIDI, Option+Cmd+U Drummer (keycodes A=0, S=1, X=7, U=32).
+        "track.create_audio":         .cmdOption(0),    // Option+Cmd+A
+        "track.create_instrument":    .cmdOption(1),    // Option+Cmd+S
+        "track.create_external_midi": .cmdOption(7),    // Option+Cmd+X
+        "track.create_drummer":       .cmdOption(32),   // Option+Cmd+U
         "track.duplicate":            .cmd(2),          // Cmd+D
         "track.delete":               .cmd(51),         // Cmd+Delete
 
@@ -109,9 +121,18 @@ actor CGEventChannel: Channel {
             return .error("Logic Pro is not running")
         }
 
-        if operation == "transport.goto_position" {
-            guard let position = params["position"] else {
-                return .error("Missing 'position' parameter")
+        if operation == "transport.goto_position" || operation == "nav.goto_bar" {
+            let position: String
+            if operation == "nav.goto_bar" {
+                guard let barText = params["bar"], let bar = Int(barText), bar >= 1 else {
+                    return .error("Missing or invalid 'bar' parameter")
+                }
+                position = "\(bar).1.1.1"
+            } else {
+                guard let requested = params["position"] else {
+                    return .error("Missing 'position' parameter")
+                }
+                position = requested
             }
             // Activate only once the request is known to be actionable, so an
             // invalid call does not steal the user's active application.

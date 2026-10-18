@@ -5,7 +5,7 @@ import Foundation
 struct ServerConfig: Sendable {
     // MARK: - Server Identity
     static let serverName = "logic-pro-mcp"
-    static let serverVersion = "0.1.0"
+    static let serverVersion = "0.2.0"
 
     // MARK: - OSC
     static let oscSendPort: UInt16 = 7001    // Server → Logic Pro

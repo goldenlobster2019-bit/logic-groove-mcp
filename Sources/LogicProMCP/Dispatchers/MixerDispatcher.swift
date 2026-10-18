@@ -17,7 +17,9 @@ struct MixerDispatcher {
             set_master_volume -> { value: Float }; \
             toggle_eq -> { track: Int }; \
             reset_strip -> { track: Int }; \
-            insert_plugin -> { track: Int, slot: Int, name: String }; \
+            insert_plugin -> { track: Int, slot: Int (0 or "instrument" = instrument slot, 1+ = audio effect slot), \
+            name: String, close_window?: Bool (default true) } (drives the Inspector channel strip via \
+            Accessibility; returns undo_label so you can verify and undo); \
             bypass_plugin -> { track: Int, slot: Int, bypassed: Bool }
             """,
         inputSchema: .object([
@@ -117,11 +119,24 @@ struct MixerDispatcher {
             let track = params["track"]?.intValue ?? params["track_index"]?.intValue ?? 0
             let slot = params["slot"]?.intValue ?? 0
             let name = params["name"]?.stringValue ?? params["plugin_name"]?.stringValue ?? ""
-            let result = await router.route(
-                operation: "plugin.insert",
-                params: ["track_index": String(track), "plugin_name": name, "slot": String(slot)]
-            )
-            return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
+            var insertParams = ["track_index": String(track), "plugin_name": name, "slot": String(slot)]
+            if let closeWindow = params["close_window"]?.boolValue {
+                insertParams["close_window"] = closeWindow ? "true" : "false"
+            }
+            let result = await router.route(operation: "plugin.insert", params: insertParams)
+            var undoLabel = Value.null
+            if result.isSuccess {
+                _ = try? await Task.sleep(for: .milliseconds(300))
+                if let title = AXLogicProElements.undoMenuTitle() {
+                    undoLabel = Value.string(title)
+                }
+            }
+            let payload = Value.object([
+                "ok": Value.bool(result.isSuccess),
+                "message": Value.string(result.message),
+                "undo_label": undoLabel,
+            ])
+            return CallTool.Result(content: [.text(encodeJSON(payload))], isError: !result.isSuccess)
 
         case "bypass_plugin":
             let track = params["track"]?.intValue ?? params["track_index"]?.intValue ?? 0

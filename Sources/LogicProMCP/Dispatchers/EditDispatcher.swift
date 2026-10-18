@@ -7,9 +7,11 @@ struct EditDispatcher {
         description: """
             Editing actions in Logic Pro. \
             Commands: undo, redo, cut, copy, paste, delete, select_all, \
-            split, join, quantize, bounce_in_place, normalize, duplicate. \
+            split, join, quantize, bounce_in_place, normalize, duplicate, last_undo. \
             Params by command: \
             quantize -> { value: String } ("1/4", "1/8", "1/16", etc.); \
+            last_undo -> {} (reads the Edit menu's Undo title, e.g. "Undo Create Initial Automation Node", \
+            without pressing anything); \
             Most others -> {} (operate on current selection)
             """,
         inputSchema: .object([
@@ -99,9 +101,13 @@ struct EditDispatcher {
             let pasteResult = await router.route(operation: "edit.paste")
             return CallTool.Result(content: [.text(pasteResult.message)], isError: !pasteResult.isSuccess)
 
+        case "last_undo":
+            let result = await router.route(operation: "edit.last_undo")
+            return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
+
         default:
             return CallTool.Result(
-                content: [.text("Unknown edit command: \(command). Available: undo, redo, cut, copy, paste, delete, select_all, split, join, quantize, bounce_in_place, normalize, duplicate")],
+                content: [.text("Unknown edit command: \(command). Available: undo, redo, cut, copy, paste, delete, select_all, split, join, quantize, bounce_in_place, normalize, duplicate, last_undo")],
                 isError: true
             )
         }

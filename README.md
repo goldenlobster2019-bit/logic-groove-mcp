@@ -29,7 +29,7 @@ Each command routes through the fastest available channel, with automatic fallba
 
 ## Tools & Resources
 
-### Tools (8 dispatchers — all actions)
+### Tools (9 dispatchers — all actions)
 
 | Tool | Commands | Examples |
 |------|----------|----------|
@@ -40,6 +40,7 @@ Each command routes through the fastest available channel, with automatic fallba
 | `logic_edit` | undo, redo, cut, copy, paste, quantize, split... | `logic_edit("quantize", {value: "1/16"})` |
 | `logic_navigate` | goto_bar, create_marker, toggle_view, set_zoom... | `logic_navigate("toggle_view", {view: "mixer"})` |
 | `logic_project` | new, open, save, bounce, launch, quit | `logic_project("open", {path: "/path/to/song.logicx"})` |
+| `logic_compose` | styles, generate, analyze_region, complement, import_midi, set_loop | `logic_compose("generate", {genre: "dub_techno", part: "stabs", bars: 8})` |
 | `logic_system` | health, permissions, refresh_cache, help | `logic_system("help", {category: "transport"})` |
 
 ### Resources (7 URIs — zero context cost)

@@ -29,12 +29,12 @@ actor ChannelRouter {
         "track.get_tracks":           [.accessibility],
         "track.get_selected":         [.accessibility],
 
-        // Track mutation — AX click, fallback to keyboard
+        // Track mutation — AX click / Track menu, fallback to keyboard
         "track.select":               [.accessibility, .cgEvent],
-        "track.create_audio":         [.cgEvent, .accessibility],
-        "track.create_instrument":    [.cgEvent, .accessibility],
-        "track.create_drummer":       [.cgEvent, .accessibility],
-        "track.create_external_midi": [.cgEvent, .accessibility],
+        "track.create_audio":         [.accessibility, .cgEvent],
+        "track.create_instrument":    [.accessibility, .cgEvent],
+        "track.create_drummer":       [.accessibility, .cgEvent],
+        "track.create_external_midi": [.accessibility, .cgEvent],
         "track.delete":               [.cgEvent, .accessibility],
         "track.rename":               [.accessibility],
         "track.set_mute":             [.accessibility, .cgEvent],
@@ -56,6 +56,9 @@ actor ChannelRouter {
         "mixer.get_bus_routing":      [.accessibility],
         "mixer.toggle_eq":            [.accessibility],
         "mixer.reset_strip":          [.accessibility],
+
+        // MIDI file import — File > Import > MIDI File via AX menu + file panel
+        "midi.import_file":           [.accessibility],
 
         // MIDI — CoreMIDI only
         "midi.send_note":             [.coreMIDI],
@@ -85,8 +88,11 @@ actor ChannelRouter {
         "nav.get_markers":            [.accessibility],
         "nav.zoom_to_fit":            [.cgEvent],
         "nav.set_zoom_level":         [.cgEvent],
+        "nav.refresh_editor":         [.accessibility],
+        "nav.open_piano_roll_window": [.accessibility],
 
         // Editing — keyboard primary
+        "edit.last_undo":             [.accessibility],
         "edit.undo":                  [.cgEvent, .accessibility],
         "edit.redo":                  [.cgEvent, .accessibility],
         "edit.cut":                   [.cgEvent],
@@ -122,6 +128,8 @@ actor ChannelRouter {
         "region.get_regions":         [.accessibility],
         "region.select":              [.accessibility],
         "region.loop":                [.accessibility, .cgEvent],
+        "region.set_loop":            [.accessibility],
+        "region.export_selected_midi": [.accessibility],
         "region.set_name":            [.accessibility],
         "region.move":                [.accessibility],
         "region.resize":              [.accessibility],

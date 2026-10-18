@@ -7,7 +7,7 @@ struct NavigateDispatcher {
         description: """
             Navigation and markers in Logic Pro. \
             Commands: goto_bar, goto_marker, create_marker, delete_marker, \
-            rename_marker, zoom_to_fit, set_zoom, toggle_view. \
+            rename_marker, zoom_to_fit, set_zoom, toggle_view, refresh_editor, open_piano_roll. \
             Params by command: \
             goto_bar -> { bar: Int }; \
             goto_marker -> { index: Int } or { name: String }; \
@@ -16,7 +16,10 @@ struct NavigateDispatcher {
             delete_marker -> { index: Int }; \
             set_zoom -> { level: String } ("in", "out", "fit"); \
             toggle_view -> { view: String } ("mixer", "piano_roll", "score", \
-            "step_editor", "library", "inspector", "automation")
+            "step_editor", "library", "inspector", "automation"); \
+            refresh_editor -> {} (closes and reopens the editor via the View menu so it follows the \
+            selected region again); \
+            open_piano_roll -> {} (Window > Open Piano Roll)
             """,
         inputSchema: .object([
             "type": .string("object"),
@@ -146,9 +149,17 @@ struct NavigateDispatcher {
             let result = await router.route(operation: operation)
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
+        case "refresh_editor":
+            let result = await router.route(operation: "nav.refresh_editor")
+            return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
+
+        case "open_piano_roll":
+            let result = await router.route(operation: "nav.open_piano_roll_window")
+            return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
+
         default:
             return CallTool.Result(
-                content: [.text("Unknown navigate command: \(command). Available: goto_bar, goto_marker, create_marker, delete_marker, rename_marker, zoom_to_fit, set_zoom, toggle_view")],
+                content: [.text("Unknown navigate command: \(command). Available: goto_bar, goto_marker, create_marker, delete_marker, rename_marker, zoom_to_fit, set_zoom, toggle_view, refresh_editor, open_piano_roll")],
                 isError: true
             )
         }

@@ -100,9 +100,31 @@ actor AccessibilityChannel: Channel {
             return .error("Region reading not yet implemented via AX")
         case "region.select", "region.loop", "region.set_name", "region.move", "region.resize":
             return .error("Region operations not yet implemented via AX")
+        case "region.set_loop":
+            return await setRegionLoop(params: params)
+        case "region.export_selected_midi":
+            return await exportSelectedMIDI()
+
+        // MARK: - MIDI file import
+        case "midi.import_file":
+            return await importMIDIFile(params: params)
+
+        // MARK: - Editor and undo helpers
+        case "nav.refresh_editor":
+            return await refreshEditor()
+        case "nav.open_piano_roll_window":
+            return await openPianoRollWindow()
+        case "edit.last_undo":
+            return lastUndo()
+
+        // MARK: - Track creation (Track menu)
+        case "track.create_audio", "track.create_instrument", "track.create_external_midi", "track.create_drummer":
+            return await createTrack(operation: operation)
 
         // MARK: - Plugins
-        case "plugin.list", "plugin.insert", "plugin.bypass", "plugin.remove":
+        case "plugin.insert":
+            return await insertPlugin(params: params)
+        case "plugin.list", "plugin.bypass", "plugin.remove":
             return .error("Plugin operations not yet implemented via AX")
 
         // MARK: - Automation
@@ -204,7 +226,7 @@ actor AccessibilityChannel: Channel {
         return .error("No track is currently selected")
     }
 
-    private func selectTrack(params: [String: String]) -> ChannelResult {
+    func selectTrack(params: [String: String]) -> ChannelResult {
         guard let indexStr = params["index"], let index = Int(indexStr) else {
             return .error("Missing or invalid 'index' parameter")
         }
