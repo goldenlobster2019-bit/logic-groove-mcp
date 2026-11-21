@@ -11,7 +11,7 @@ description: Use when producing house, deep house or dub techno in Logic Pro thr
 2. **Look**: read `logic://tracks`, `logic://transport/state`, `logic://project/info` (tempo, existing tracks).
 3. **Analyze** what the user already has: select the stab or chord region, then `logic_compose("analyze_region")`. Read key, chords and `main_onsets`.
 4. **Pick the key**: take the analysis; otherwise the user's request; otherwise the genre default (dub techno F minor, deep house A minor, house A dorian).
-5. **Generate**: `generate` for a fresh part, `complement` for a part that must fit the selected region (bass avoids stab onsets; chords follow the detected chord). Choose a style from `logic_compose("styles", {genre, part})`.
+5. **Generate or write**: `generate` for a quick starting point, `complement` for a part that must fit the selected region (bass avoids stab onsets; chords follow the detected chord). Choose a style from `logic_compose("styles", {genre, part})`. When the user describes a specific sound, rhythm or progression, use `write` instead (see "Writing parts from a description").
 6. **Place**: use `at_bar` (default 1) and `loop: true` for repeating clips; or `import: false` and `import_midi` later.
 7. **Sound**: create a track first with `logic_tracks("create_instrument")` if needed, then `logic_mixer("insert_plugin", {track, slot: "instrument", name})`. Effects use slot 1+.
 8. **Verify** every mutation: read `undo_label` in the result or call `logic_edit("last_undo")`; re-read `logic://tracks`. Results marked unverified mean the action was performed but not confirmed.
@@ -22,6 +22,295 @@ Rules:
 - Do not change the project tempo unless asked; pass `tempo` to `generate` only when the user wants it embedded.
 - Do not use undo to "fix" a result unless `last_undo` shows it is your own action.
 - Never improvise screen clicks; if a step fails, report the error text and ask.
+
+## Writing parts from a description
+
+Prefer `logic_compose("write", ...)` whenever the user describes a specific sound, rhythm, chord or progression that the fixed styles do not cover. `generate` is for quick starting points; `write` is for exactly what was asked. You specify the notes (`pos` as `bar.beat.16th`, pitch as note name or drum name, `len` in 16ths or `"1/8."`), chords (symbols such as `Fm9` with a `voicing`), and drum patterns as step strings (`x` hit, `X` accent, `o` soft, `g` ghost, `.` rest, `_` tie).
+
+Working rules:
+- Write a short pattern and tile it: `pattern_bars` (notes and chords) plus `bars`. Step patterns repeat on their own to fill `bars`.
+- Preview first with `import: false`, read `warnings`, `range`, `preview_bar1` and `analysis`, then import with `import_midi` (or call `write` again with the same `seed`).
+- You cannot hear the result. Use `analysis.key` and `analysis.chords` as a sanity check. A dub voicing without the root in the bass can read as the relative or dominant key (Fm9 stabs may analyze as C minor); judge by the chord names, or add the root with a slash bass (`"Fm9/F"`).
+- Bass notes under chords: keep them below the chord register (chord root octave 2 means bass in octave 1) so same-pitch overlaps do not shorten the chord.
+- `swing` and `humanize` work as in `generate`; leave them at 0 for exact grids.
+
+Recipes (ready to send; change the key by changing the chord roots and note names):
+
+1. Dub techno chord stab: one m9 chord, dub voicing, 2-3 hits per bar on dotted-8th positions, short, varied velocity.
+
+```
+logic_compose("write", {
+  "name": "Dub stab Fm9",
+  "pattern_bars": 2,
+  "bars": 8,
+  "humanize": 0.15,
+  "chords": [
+    {
+      "pos": "1.1.1",
+      "chord": "Fm9",
+      "voicing": "dub",
+      "len": "1/16",
+      "vel": 88
+    },
+    {
+      "pos": "1.1.4",
+      "chord": "Fm9",
+      "voicing": "dub",
+      "len": "1/16",
+      "vel": 64
+    },
+    {
+      "pos": "1.2.3",
+      "chord": "Fm9",
+      "voicing": "dub",
+      "len": "1/16",
+      "vel": 76
+    },
+    {
+      "pos": "2.1.4",
+      "chord": "Fm9",
+      "voicing": "dub",
+      "len": "1/16",
+      "vel": 70
+    },
+    {
+      "pos": "2.2.3",
+      "chord": "Fm9",
+      "voicing": "dub",
+      "len": "1/16",
+      "vel": 58
+    }
+  ]
+})
+```
+
+2. Dub techno sub: offbeat 8ths on the root in octave 1, short (use `F0` for a deeper sub).
+
+```
+logic_compose("write", {
+  "name": "Dub sub F",
+  "bars": 8,
+  "steps": {
+    "F1": {
+      "pattern": "..x...x...x...x.",
+      "vel": 100,
+      "len": "1/16"
+    }
+  }
+})
+```
+
+3. Minimal dub techno drums: soft 4/4 kick, offbeat closed hat, ghost shaker 16ths, sparse rim (once every two bars).
+
+```
+logic_compose("write", {
+  "name": "Dub drums minimal",
+  "bars": 8,
+  "humanize": 0.1,
+  "steps": {
+    "kick": {
+      "pattern": "x...x...x...x...",
+      "vel": 88
+    },
+    "hh": {
+      "pattern": "..x...x...x...x.",
+      "vel": 70
+    },
+    "shaker": "gggogggogggogggo",
+    "rim": "........................x......."
+  }
+})
+```
+
+4. Deep house chords with a syncopated bassline: i9 - iv9, whole-bar spread voicings, bass in octave 1.
+
+```
+logic_compose("write", {
+  "name": "Deep house i9 - iv9",
+  "pattern_bars": 4,
+  "bars": 8,
+  "swing": 0.2,
+  "humanize": 0.1,
+  "chords": [
+    {
+      "pos": "1.1.1",
+      "chord": "Am9",
+      "octave": 2,
+      "voicing": "spread",
+      "len": "1/1",
+      "vel": 72,
+      "vel_top": 80
+    },
+    {
+      "pos": "2.1.1",
+      "chord": "Dm9",
+      "octave": 2,
+      "voicing": "spread",
+      "len": "1/1",
+      "vel": 72,
+      "vel_top": 80
+    },
+    {
+      "pos": "3.1.1",
+      "chord": "Am9",
+      "octave": 2,
+      "voicing": "spread",
+      "len": "1/1",
+      "vel": 72,
+      "vel_top": 80
+    },
+    {
+      "pos": "4.1.1",
+      "chord": "Dm9",
+      "octave": 2,
+      "voicing": "spread",
+      "len": "1/1",
+      "vel": 72,
+      "vel_top": 80
+    }
+  ],
+  "notes": [
+    {
+      "pos": "1.1.1",
+      "pitch": "A1",
+      "len": "1/8",
+      "vel": 100
+    },
+    {
+      "pos": "1.2.3",
+      "pitch": "A1",
+      "len": "1/16",
+      "vel": 80
+    },
+    {
+      "pos": "1.3.2",
+      "pitch": "E2",
+      "len": "1/16",
+      "vel": 70
+    },
+    {
+      "pos": "1.4.3",
+      "pitch": "A1",
+      "len": "1/8",
+      "vel": 90
+    },
+    {
+      "pos": "2.1.1",
+      "pitch": "D1",
+      "len": "1/8",
+      "vel": 100
+    },
+    {
+      "pos": "2.2.3",
+      "pitch": "D1",
+      "len": "1/16",
+      "vel": 80
+    },
+    {
+      "pos": "2.3.2",
+      "pitch": "A1",
+      "len": "1/16",
+      "vel": 70
+    },
+    {
+      "pos": "2.4.3",
+      "pitch": "D1",
+      "len": "1/8",
+      "vel": 90
+    },
+    {
+      "pos": "3.1.1",
+      "pitch": "A1",
+      "len": "1/8",
+      "vel": 100
+    },
+    {
+      "pos": "3.2.3",
+      "pitch": "A1",
+      "len": "1/16",
+      "vel": 80
+    },
+    {
+      "pos": "3.3.2",
+      "pitch": "E2",
+      "len": "1/16",
+      "vel": 70
+    },
+    {
+      "pos": "3.4.3",
+      "pitch": "A1",
+      "len": "1/8",
+      "vel": 90
+    },
+    {
+      "pos": "4.1.1",
+      "pitch": "D1",
+      "len": "1/8",
+      "vel": 100
+    },
+    {
+      "pos": "4.2.3",
+      "pitch": "D1",
+      "len": "1/16",
+      "vel": 80
+    },
+    {
+      "pos": "4.3.2",
+      "pitch": "A1",
+      "len": "1/16",
+      "vel": 70
+    },
+    {
+      "pos": "4.4.3",
+      "pitch": "D1",
+      "len": "1/8",
+      "vel": 90
+    }
+  ]
+})
+```
+
+For a i9 - VII - VI feel, change the chord symbols to `Am9`, `Gmaj9`, `Fmaj9`, `Gmaj9` and move the bass note names to the same roots.
+
+5. Classic house drums plus organ stab: kick on every beat, clap on 2 and 4, open hat on the offbeat, ghost hats, syncopated Am7 stab.
+
+```
+logic_compose("write", {
+  "name": "House drums and organ stab",
+  "pattern_bars": 1,
+  "bars": 4,
+  "humanize": 0.1,
+  "chords": [
+    {
+      "step": 3,
+      "chord": "Am7",
+      "octave": 3,
+      "len": "1/16",
+      "vel": 98
+    },
+    {
+      "step": 6,
+      "chord": "Am7",
+      "octave": 3,
+      "len": "1/16",
+      "vel": 84
+    },
+    {
+      "step": 10,
+      "chord": "Am7",
+      "octave": 3,
+      "len": "1/16",
+      "vel": 92
+    }
+  ],
+  "steps": {
+    "kick": "x...x...x...x...",
+    "clap": "....x.......x...",
+    "oh": "..x...x...x...x.",
+    "hh": ".g.g.g.g.g.g.g.g"
+  }
+})
+```
 
 ## Genre cheat sheet
 

@@ -218,6 +218,43 @@ struct SystemDispatcher {
                                        loop? (default false), tempo? }
                                        part: drums, kick, hats, bass, stabs, chords, pad.
                                        Seed is always echoed back so a clip can be reproduced.
+                  write             -> free-form clip from exact notes, chords and step patterns
+                                       { name?, bars? (1-256, derived if omitted),
+                                         pattern_bars? (1-64; notes/chords are one pattern of this
+                                         many bars, tiled to fill bars), grid? (steps per bar:
+                                         4, 8, 12, 16, 24, 32, 48; default 16), channel? (1-16),
+                                         transpose? (-48..48, not applied to drum names),
+                                         swing? (0-1), humanize? (0-1), seed?,
+                                         notes?: [{ pos|step, pitch, len?, vel? }],
+                                         chords?: [{ pos|step, chord|pitches, octave? (-1..6,
+                                           default 2), voicing? (close, dub, spread, shell,
+                                           rootless), inversion? (0-4), strum? (ticks 0-120),
+                                           len?, vel?, vel_top? }],
+                                         steps?: { lane: pattern | { pattern, vel?, len? } },
+                                         import? (default true), at_bar? (default 1),
+                                         loop? (default false), tempo? }
+                                       pos: "bar.beat.16th", 1-based ("2.3.3"); optional 4th field
+                                         = extra ticks 0-119 ("1.1.3.60"); "bar.beat" and "bar" work.
+                                       step: 0-based index in grid steps, fractions allowed (2.5).
+                                       pitch: MIDI 0-127, note name in Logic octaves (C3 = 60,
+                                         "F1", "Bb2") or drum name (kick, snare, clap, closed_hat,
+                                         open_hat, rim, shaker, ride, crash, tamb, cowbell, ...).
+                                       len: 16ths (0.5, 6) or "1/8", "1/8." dotted, "1/8t" triplet,
+                                         "2bars". Default one 16th (steps: one grid step).
+                                       vel: 1-127, default 100.
+                                       chord: symbol such as Fm9, Bbmaj7, C7#9, m7b5, 7sus4,
+                                         add9, 13; "Fm7/C" adds bass C one octave below the root
+                                         octave. Or pitches: [41, "C2", "Eb3"] used as written.
+                                       steps lane keys: drum name, note name or MIDI number.
+                                         Pattern chars: x hit, X accent (+20), o soft (-30),
+                                         g ghost (-55), . or - rest, _ tie (extends previous hit).
+                                         Spaces and | are ignored; the pattern repeats to fill bars.
+                                       Result: path, bars, note_count, seed, range, preview_bar1,
+                                         warnings, analysis (key and chords: check it, you cannot hear).
+                                       Example: { "pattern_bars": 1, "bars": 4,
+                                         "chords": [{ "pos": "1.1.1", "chord": "Fm9", "voicing": "dub",
+                                           "len": "1/16", "vel": 84 }],
+                                         "steps": { "kick": "x...x...x...x...", "hh": "..x...x...x...x." } }
                   analyze_region    -> {} — Export the selected MIDI region and analyze it
                   analyze_file      -> { path: String } — Analyze an existing .mid file
                   complement        -> same params as generate; fits the selected region

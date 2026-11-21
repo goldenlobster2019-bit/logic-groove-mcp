@@ -2,7 +2,7 @@
   "name": "logic-groove-mcp",
   "display_name": "Logic Groove MCP",
   "description": "Bidirectional, stateful control of Logic Pro from AI assistants. 9 dispatcher tools + 7 resources across 5 native macOS channels.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "Golden Lobster Studio (Sorin Gheorghita); based on work by Kolton Jacobs",
   "license": "MIT",
   "homepage": "https://github.com/goldenlobster2019-bit/logic-groove-mcp",

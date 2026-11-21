@@ -9,7 +9,7 @@ struct ComposeDispatcher {
             Generate, analyze and import MIDI for house, deep house and dub techno. \
             Writes .mid files to ~/Music/LogicGrooveMCP/Generated and imports them through \
             Logic's File > Import > MIDI File menu (no pixel clicking). \
-            Commands: styles, generate, analyze_region, analyze_file, complement, \
+            Commands: styles, generate, write, analyze_region, analyze_file, complement, \
             import_midi, set_loop. \
             Params by command: \
             styles -> { genre?: String, part?: String }; \
@@ -19,6 +19,24 @@ struct ComposeDispatcher {
             swing?: Float (0-1), humanize?: Float (0-1, default 0.2), octave?: Int, seed?: Int \
             (random if omitted, always echoed back), name?: String, import?: Bool (default true), \
             at_bar?: Int (default 1), loop?: Bool (default false), tempo?: Float (written to the file only if given) }; \
+            write -> free-form clip from exact notes, chords and step patterns: \
+            { name?, bars?: Int (1-256, derived from content if omitted), pattern_bars?: Int (1-64, notes and chords \
+            describe this many bars and are tiled to fill bars), grid?: Int (steps per bar: 4, 8, 12, 16, 24, 32, 48; default 16), \
+            channel?: Int (1-16), transpose?: Int (semitones, not applied to drum names), swing?: Float (0-1), \
+            humanize?: Float (0-1), seed?: Int, \
+            notes?: [{ pos|step, pitch, len?, vel? }], \
+            chords?: [{ pos|step, chord|pitches, octave?: Int (-1..6, default 2), \
+            voicing?: "close"|"dub"|"spread"|"shell"|"rootless", inversion?: Int (0-4), strum?: Int (ticks), len?, vel?, vel_top? }], \
+            steps?: { lane: pattern | { pattern, vel?, len? } }, \
+            import?: Bool (default true), at_bar?: Int (default 1), loop?: Bool (default false), tempo?: Float }. \
+            Syntax: pos is "bar.beat.16th" (1-based, e.g. "2.3.3"; optional 4th field = extra ticks; "bar.beat" and "bar" also work), \
+            step is a 0-based index in grid steps (fractions allowed); pitch is a MIDI number, a note name in Logic octaves \
+            (C3 = 60, "F1", "Bb2") or a drum name (kick, snare, clap, closed_hat, open_hat, rim, shaker, ...); \
+            len is in 16ths (0.5, 6) or "1/8", "1/8." (dotted), "1/8t" (triplet), "2bars"; vel 1-127; \
+            chord is a symbol such as "Fm9", "Bbmaj7", "C7#9", "Fm7/C" (slash = bass note one octave below the root octave); \
+            steps lane keys are drum names, note names or MIDI numbers, pattern chars: x hit, X accent, o soft, g ghost, \
+            . or - rest, _ tie (extends the previous hit); spaces and | are ignored and the pattern repeats to fill bars. \
+            The result lists warnings (dropped, shortened or trimmed notes), the note range and an analysis (key, chords) to sanity-check. \
             analyze_region -> {} (exports the selected MIDI region, then analyzes it); \
             analyze_file -> { path: String }; \
             complement -> same params as generate; analyzes the selected region first and generates a part that fits it; \
@@ -57,6 +75,9 @@ struct ComposeDispatcher {
 
         case "complement":
             return await generateResult(params: params, router: router, complement: true)
+
+        case "write":
+            return await writeResult(params: params, router: router)
 
         case "analyze_region":
             switch await exportAndAnalyze(router: router) {
@@ -110,7 +131,7 @@ struct ComposeDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         default:
-            return error("Unknown compose command: \(command). Available: styles, generate, analyze_region, analyze_file, complement, import_midi, set_loop")
+            return error("Unknown compose command: \(command). Available: styles, generate, write, analyze_region, analyze_file, complement, import_midi, set_loop")
         }
     }
 
@@ -399,6 +420,112 @@ struct ComposeDispatcher {
         if let analysisSummary {
             result["analysis"] = analysisSummary
         }
+
+        var isFailure = false
+        if doImport {
+            let outcome = await performImport(path: fileURL.path, atBar: atBar, loop: loop, router: router)
+            result["import"] = outcome.value
+            if !outcome.ok { isFailure = true }
+        } else {
+            result["import"] = .string("skipped (import=false); use import_midi with the path to import it")
+        }
+        return json(.object(result), isError: isFailure)
+    }
+
+    // MARK: - write
+
+    private static func writeResult(
+        params: [String: Value],
+        router: ChannelRouter
+    ) async -> CallTool.Result {
+        let seed: UInt64
+        let tempo: Double?
+        let atBar: Int
+        do {
+            // JSON-safe integer range so the seed round-trips through the client.
+            let maxSeed = 9_007_199_254_740_991
+            if isSupplied(params, "seed") {
+                let value: Int = try unwrap(
+                    InputValidation.int(params, keys: ["seed"], range: 0...maxSeed, label: "seed")
+                )
+                seed = UInt64(value)
+            } else {
+                seed = UInt64.random(in: 1...UInt64(maxSeed))
+            }
+            if isSupplied(params, "tempo") {
+                tempo = try unwrap(
+                    InputValidation.double(params, keys: ["tempo"], range: 20...999, label: "tempo")
+                )
+            } else {
+                tempo = nil
+            }
+            atBar = try unwrap(
+                InputValidation.int(params, keys: ["at_bar"], default: 1, range: 1...100_000, label: "at_bar")
+            )
+        } catch let failure as ParamError {
+            return error(failure.message)
+        } catch {
+            return Self.error("Invalid parameters")
+        }
+        let doImport = boolParam(params, "import", default: true)
+        let loop = boolParam(params, "loop", default: false)
+
+        // The tool params are the clip spec; ClipWriter ignores keys it does not know (import, at_bar, ...).
+        let specData = Data(encodeJSON(Value.object(params)).utf8)
+        let written: WrittenClip
+        do {
+            written = try ClipWriter.write(json: specData, seed: seed)
+        } catch let failure as ClipWriterError {
+            return error(failure.message)
+        } catch {
+            return Self.error("Invalid clip spec: \(error.localizedDescription)")
+        }
+        let clip = written.clip
+
+        // Write the MIDI file.
+        let directory = ComposeSupport.generatedDirectory()
+        let baseName = ComposeSupport.sanitizeFileName(clip.name, fallback: "written-clip")
+        let fileURL = directory.appendingPathComponent("\(ComposeSupport.timestamp())-\(baseName).mid")
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let data = MIDIFileIO.write(clip: clip, tempoBPM: tempo)
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            return Self.error("Failed to write \(fileURL.path): \(error.localizedDescription)")
+        }
+        Log.info("Wrote \(clip.notes.count) notes -> \(fileURL.path)", subsystem: "compose")
+
+        // 4/4 at 480 PPQ (the MusicCore time base).
+        let ticksPerBar = 1_920
+        let preview: [Value] = clip.notes
+            .filter { $0.start < ticksPerBar }
+            .prefix(48)
+            .map { note in
+                Value.object([
+                    "pos": Value.string(ComposeSupport.positionString(tick: note.start)),
+                    "note": Value.string(NoteName.name(note.pitch)),
+                    "vel": Value.int(note.velocity),
+                ])
+            }
+        let lowest = clip.notes.map { $0.pitch }.min() ?? 0
+        let highest = clip.notes.map { $0.pitch }.max() ?? 0
+        let warningValues: [Value] = written.warnings.map { Value.string($0) }
+
+        var result: [String: Value] = [
+            "path": .string(fileURL.path),
+            "clip_name": .string(clip.name),
+            "bars": .int(clip.lengthTicks / ticksPerBar),
+            "note_count": .int(clip.notes.count),
+            "seed": .int(Int(seed)),
+            "range": .object([
+                "lowest": .string(NoteName.name(lowest)),
+                "highest": .string(NoteName.name(highest)),
+            ]),
+            "preview_bar1": .array(preview),
+            "warnings": .array(warningValues),
+            "tempo_written": tempo.map { Value.double($0) } ?? Value.null,
+        ]
+        result["analysis"] = analysisValue(Analyzer.analyze(clip), path: fileURL.path)
 
         var isFailure = false
         if doImport {

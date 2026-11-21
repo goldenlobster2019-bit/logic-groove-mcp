@@ -2,7 +2,7 @@
 
 ## Purpose
 
-MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write electronic music parts (house, deep house, dub techno). Fork of koltyj/logic-pro-mcp (MIT, Kolton Jacobs), renamed and extended by Golden Lobster Studio (Sorin Gheorghita). Repo: https://github.com/goldenlobster2019-bit/logic-groove-mcp. Version 0.2.0.
+MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write electronic music parts (house, deep house, dub techno). Fork of koltyj/logic-pro-mcp (MIT, Kolton Jacobs), renamed and extended by Golden Lobster Studio (Sorin Gheorghita). Repo: https://github.com/goldenlobster2019-bit/logic-groove-mcp. Version 0.3.0.
 
 ## Structure
 
@@ -12,6 +12,7 @@ MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write elec
   - `Theory.swift` - note names, scales, chord building, chord naming.
   - `MIDIFileIO.swift` - Standard MIDI File reader/writer (tempo meta only when passed).
   - `Analyzer.swift` - key, chord and onset-grid analysis of a Clip.
+  - `ClipWriter.swift` - free-form clip builder for `logic_compose write`: JSON spec (notes, chords, step patterns) to a Clip; chord symbol parser, voicings, drum name table, swing/humanize, warnings.
   - `Generators/Generator.swift` - public API (generate, complement, styles), request resolution, style catalogue.
   - `Generators/DubTechno.swift`, `House.swift` - per genre/part pattern builders (house and deep_house share House.swift).
   - `Generators/Groove.swift` - swing, humanize, interlock with stab onsets, finalize.
@@ -24,7 +25,7 @@ MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write elec
   - `MIDI/`, `OSC/` - CoreMIDI engine and MMC, UDP OSC client/server.
   - `State/` - cache, models, adaptive poller. `Resources/` - 7 MCP resources.
   - `Utilities/` - `ComposeSupport.swift` (folders, file names, positions, path validation), input validation, logging, permissions, process utils.
-- `Tests/MusicCoreTests/` - generator, analyzer, MIDI IO tests (run everywhere). `Tests/LogicGrooveMCPTests/` - macOS only.
+- `Tests/MusicCoreTests/` - generator, analyzer, MIDI IO, ClipWriter and doc-recipe tests (run everywhere). `Tests/LogicGrooveMCPTests/` - macOS only.
 - `docs/SKILL.md` - agent skill teaching the music workflow. `Scripts/install.sh`, `manifest.json`, `.github/workflows/{ci,release}.yml`.
 
 ## Conventions
@@ -41,7 +42,7 @@ MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write elec
 
 ## Build and test
 
-- This environment is Linux: `export PATH=/opt/swift/swift-6.0.3-RELEASE-ubuntu24.04/usr/bin:$PATH && swift test` runs MusicCore tests only (37 tests at last run).
+- This environment is Linux: `export PATH=/opt/swift/swift-6.0.3-RELEASE-ubuntu24.04/usr/bin:$PATH && swift test` runs MusicCore tests only (85 tests at last run).
 - The AX/CGEvent/CoreMIDI code cannot be compiled on Linux. macOS CI (`macos-15`, `swift build -c release` + `swift test`) is the only compile check. Push and read CI before trusting server changes.
 - CI also runs a Linux job in the `swift:6.0` container.
 
@@ -54,6 +55,7 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 4. `84cd461` `logic_compose` tool; MIDI import/export via file panels; plugin insert; region loop; editor refresh; `last_undo`; fixed stop/play keys and track creation via menus.
 5. `6699f65` explicit CoreGraphics import (macOS compile fix).
 6. Rename to Logic Groove MCP (package, targets, ServerConfig name "logic-groove-mcp", MIDI port names, manifest, installer, release, CODEOWNERS, SECURITY, license line), Linux CI job, README rewrite, this file, docs/SKILL.md.
+7. Branch `free-notes` (0.3.0): `logic_compose write` (ClipWriter in MusicCore, `writeResult` in ComposeDispatcher, SystemDispatcher help, README section, SKILL recipes, ClipWriterTests and DocRecipeTests). Server-side code was written without a macOS compile: read CI first.
 
 ## Verified on a real Mac (Logic Pro 11, 2026-10-18)
 
@@ -85,6 +87,8 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 - Tempo meta is written to MIDI only when `tempo` is passed, so imports do not change the project tempo.
 - Prefer writing MIDI files and importing them over drawing notes.
 - Never delete user material; create new tracks, mute instead of delete.
+- Free-form parts go through `logic_compose write` (ClipWriter in MusicCore); generators remain for quick starting points.
+- ClipWriter warning counts (dropped, shortened, trimmed) are computed before humanize so they only reflect what the caller wrote.
 
 ## Lessons from the live Logic session
 

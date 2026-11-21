@@ -12,6 +12,7 @@ Based on [koltyj/logic-pro-mcp](https://github.com/koltyj/logic-pro-mcp) by Kolt
 ## Features
 
 - **Generate parts** with `logic_compose`: drums, kick, hats, bass, stabs, chords and pad for house, deep house and dub techno. Every part has named styles, and results are seedable (same seed, same clip) with `density`, `swing` and `humanize` controls.
+- **Write your own notes** with `logic_compose("write", ...)`: give exact notes, chords (symbols such as `Fm9`, with voicings) and step patterns for drums, and get a clip written and imported exactly like a generated one. Use it whenever the fixed styles do not cover the sound you want.
 - **Analyze a selected region**: export the selected MIDI region from Logic and get key, chords, rhythm (onset grid) and pitch range back.
 - **Complement**: write a part that fits your existing stab or chords. The bass avoids your stab onsets, takes the key from the analysis, and chord parts follow the detected chord.
 - **MIDI import and export**: generated files are imported through Logic's File > Import > MIDI File menu at the bar you choose; regions are exported the same way for analysis. Existing `.mid` files can be analyzed or imported.
@@ -58,7 +59,7 @@ logic_edit("last_undo", {})
 
 | Tool | Purpose | Example |
 |------|---------|---------|
-| `logic_compose` | styles, generate, analyze_region, analyze_file, complement, import_midi, set_loop | `logic_compose("generate", {genre: "house", part: "bass"})` |
+| `logic_compose` | styles, generate, write, analyze_region, analyze_file, complement, import_midi, set_loop | `logic_compose("generate", {genre: "house", part: "bass"})` |
 | `logic_transport` | play, stop, record, set_tempo, goto_position... | `logic_transport("set_tempo", {tempo: 124})` |
 | `logic_tracks` | select, create_audio, create_instrument, mute, solo, arm, rename... | `logic_tracks("mute", {index: 2, enabled: true})` |
 | `logic_mixer` | set_volume, set_pan, insert_plugin, bypass_plugin... | `logic_mixer("set_volume", {track: 0, value: 0.8})` |
@@ -89,6 +90,238 @@ Full command reference: `logic_system("help", {category: "all"})`.
 | `import`, `at_bar`, `loop`, `tempo`, `name` | Import into Logic (default true), target bar (default 1), enable region Loop, write tempo into the file, clip name |
 
 Deep house and house currently share the same pattern generators; they differ in default scale (minor vs dorian) and clip naming.
+
+### Writing your own notes
+
+`write` takes the exact material instead of a style. Everything is optional, but at least one of `notes`, `chords` or `steps` must produce a note. The clip is written to a `.mid` file and imported the same way as `generate`. The result lists `warnings` (dropped, shortened or trimmed notes), the note `range`, a bar-1 preview and an `analysis` (key, chords) so you can check what was written without listening.
+
+| Parameter | Meaning |
+|-----------|---------|
+| `name` | Clip name (default "Written clip") |
+| `bars` | 1 to 256. If omitted: derived from the content (or `pattern_bars`) |
+| `pattern_bars` | 1 to 64. `notes` and `chords` describe a pattern of this many bars, tiled to fill `bars` |
+| `grid` | Steps per bar for `steps` and numeric `step` positions: 4, 8, 12, 16 (default), 24, 32, 48. 12 and 24 are triplet grids |
+| `channel`, `transpose` | MIDI channel 1 to 16; semitones -48 to 48 (not applied to drum names) |
+| `swing`, `humanize`, `seed` | Same meaning as for `generate`; with both at 0 the output is exactly what you wrote |
+| `notes` | `[{ pos or step, pitch, len?, vel? }]` |
+| `chords` | `[{ pos or step, chord or pitches, octave?, voicing?, inversion?, strum?, len?, vel?, vel_top? }]` |
+| `steps` | `{ lane: pattern }` or `{ lane: { pattern, vel?, len? } }` |
+| `import`, `at_bar`, `loop`, `tempo` | As for `generate` |
+
+Syntax:
+
+- `pos` is `bar.beat.sixteenth`, all 1-based (`"2.3.3"`); an optional fourth field adds ticks 0 to 119 (`"1.1.3.60"`); `"bar.beat"` and `"bar"` also work. `step` is a 0-based index in `grid` steps and may be fractional (`2.5`).
+- `pitch` is a MIDI number, a note name in Logic octaves (`"F1"`, `"Bb2"`, C3 = 60) or a drum name (`kick`, `snare`, `clap`, `rim`, `closed_hat`/`hh`, `open_hat`/`oh`, `pedal_hat`, `shaker`, `tamb`, `ride`, `crash`, `cowbell`, toms, congas, `clave`).
+- `len` is in 16ths (`0.5`, `6`) or a note value: `"1/8"`, `"1/8."` (dotted), `"1/8t"` (triplet), `"2bars"`. Default is one 16th. `vel` is 1 to 127 (default 100).
+- `chord` is a symbol: major, `m`, `dim`, `aug`, `sus2`, `sus4`, `5`, `6`, `m6`, `7`, `m7`, `maj7`, `mmaj7`, `dim7`, `m7b5`, `9`, `m9`, `maj9`, `11`, `m11`, `13`, `m13`, `add9`, `madd9`, `7sus4`, `m7sus4`, with alterations `b5 #5 b9 #9 #11 b13`. A slash adds a bass note one octave below the root octave (`"Fm7/C"`). `pitches` lists exact notes instead. `octave` is the root octave (default 2, so `Fm7` starts on F2).
+- `voicing`: `close` (default), `dub` (open dub-techno stab), `spread`, `shell` (root, third, seventh), `rootless`. `inversion` 0 to 4 moves the lowest note up an octave; `strum` delays each note from low to high by that many ticks.
+- `steps` lane keys are drum names, note names or MIDI numbers. Pattern characters: `x` hit, `X` accent, `o` soft, `g` ghost, `.` or `-` rest, `_` tie (extends the previous hit). Spaces and `|` are ignored, and the pattern repeats to fill `bars`.
+
+Dub techno chord stab with drums:
+
+```
+logic_compose("write", {
+  "name": "Dub techno stab and drums",
+  "pattern_bars": 2,
+  "bars": 8,
+  "humanize": 0.15,
+  "chords": [
+    {
+      "pos": "1.1.1",
+      "chord": "Fm9",
+      "voicing": "dub",
+      "len": "1/16",
+      "vel": 88
+    },
+    {
+      "pos": "1.1.4",
+      "chord": "Fm9",
+      "voicing": "dub",
+      "len": "1/16",
+      "vel": 64
+    },
+    {
+      "pos": "1.2.3",
+      "chord": "Fm9",
+      "voicing": "dub",
+      "len": "1/16",
+      "vel": 76
+    },
+    {
+      "pos": "2.1.4",
+      "chord": "Fm9",
+      "voicing": "dub",
+      "len": "1/16",
+      "vel": 70
+    },
+    {
+      "pos": "2.2.3",
+      "chord": "Fm9",
+      "voicing": "dub",
+      "len": "1/16",
+      "vel": 58
+    }
+  ],
+  "steps": {
+    "kick": {
+      "pattern": "x...x...x...x...",
+      "vel": 88
+    },
+    "hh": {
+      "pattern": "..x...x...x...x.",
+      "vel": 70
+    }
+  }
+})
+```
+
+Deep house progression (i9, iv9) with a syncopated bassline:
+
+```
+logic_compose("write", {
+  "name": "Deep house i9 - iv9",
+  "pattern_bars": 4,
+  "bars": 8,
+  "swing": 0.2,
+  "humanize": 0.1,
+  "chords": [
+    {
+      "pos": "1.1.1",
+      "chord": "Am9",
+      "octave": 2,
+      "voicing": "spread",
+      "len": "1/1",
+      "vel": 72,
+      "vel_top": 80
+    },
+    {
+      "pos": "2.1.1",
+      "chord": "Dm9",
+      "octave": 2,
+      "voicing": "spread",
+      "len": "1/1",
+      "vel": 72,
+      "vel_top": 80
+    },
+    {
+      "pos": "3.1.1",
+      "chord": "Am9",
+      "octave": 2,
+      "voicing": "spread",
+      "len": "1/1",
+      "vel": 72,
+      "vel_top": 80
+    },
+    {
+      "pos": "4.1.1",
+      "chord": "Dm9",
+      "octave": 2,
+      "voicing": "spread",
+      "len": "1/1",
+      "vel": 72,
+      "vel_top": 80
+    }
+  ],
+  "notes": [
+    {
+      "pos": "1.1.1",
+      "pitch": "A1",
+      "len": "1/8",
+      "vel": 100
+    },
+    {
+      "pos": "1.2.3",
+      "pitch": "A1",
+      "len": "1/16",
+      "vel": 80
+    },
+    {
+      "pos": "1.3.2",
+      "pitch": "E2",
+      "len": "1/16",
+      "vel": 70
+    },
+    {
+      "pos": "1.4.3",
+      "pitch": "A1",
+      "len": "1/8",
+      "vel": 90
+    },
+    {
+      "pos": "2.1.1",
+      "pitch": "D1",
+      "len": "1/8",
+      "vel": 100
+    },
+    {
+      "pos": "2.2.3",
+      "pitch": "D1",
+      "len": "1/16",
+      "vel": 80
+    },
+    {
+      "pos": "2.3.2",
+      "pitch": "A1",
+      "len": "1/16",
+      "vel": 70
+    },
+    {
+      "pos": "2.4.3",
+      "pitch": "D1",
+      "len": "1/8",
+      "vel": 90
+    },
+    {
+      "pos": "3.1.1",
+      "pitch": "A1",
+      "len": "1/8",
+      "vel": 100
+    },
+    {
+      "pos": "3.2.3",
+      "pitch": "A1",
+      "len": "1/16",
+      "vel": 80
+    },
+    {
+      "pos": "3.3.2",
+      "pitch": "E2",
+      "len": "1/16",
+      "vel": 70
+    },
+    {
+      "pos": "3.4.3",
+      "pitch": "A1",
+      "len": "1/8",
+      "vel": 90
+    },
+    {
+      "pos": "4.1.1",
+      "pitch": "D1",
+      "len": "1/8",
+      "vel": 100
+    },
+    {
+      "pos": "4.2.3",
+      "pitch": "D1",
+      "len": "1/16",
+      "vel": 80
+    },
+    {
+      "pos": "4.3.2",
+      "pitch": "A1",
+      "len": "1/16",
+      "vel": 70
+    },
+    {
+      "pos": "4.4.3",
+      "pitch": "D1",
+      "len": "1/8",
+      "vel": 90
+    }
+  ]
+})
+```
 
 ## Styles
 
