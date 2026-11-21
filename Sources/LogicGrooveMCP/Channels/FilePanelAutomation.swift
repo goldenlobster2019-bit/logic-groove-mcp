@@ -135,46 +135,118 @@ enum FilePanelAutomation {
         return false
     }
 
-    /// With a panel showing: Cmd+Shift+G, enter `path`, Return.
-    /// `path` may be a folder or a file. Returns nil on success, otherwise an error message.
-    static func goTo(path: String, pid: pid_t) async -> String? {
-        // Verified on Logic Pro 11 / macOS 15: Cmd+Shift+G opens a "Go to" sheet inside the
-        // panel. Setting its AXValue is ignored (Return then uses the pre-filled, previous
-        // path), so the path is TYPED. Typing a file path selects that file in an Open panel.
-        guard await ensureFrontmost() else {
-            return "Could not bring Logic Pro to the front"
+    /// Poll (every 100 ms) until the import panel (see AXLogicProElements.importPanel) shows up.
+    static func waitForImportPanel(timeoutMs: Int = 5_000) async -> Bool {
+        var waited = 0
+        while waited <= timeoutMs {
+            if AXLogicProElements.importPanel() != nil { return true }
+            guard await pause(ms: 100) else { return false }
+            waited += 100
         }
+        return false
+    }
+
+    /// Poll until the import panel is gone.
+    static func waitForImportPanelToClose(timeoutMs: Int = 5_000) async -> Bool {
+        var waited = 0
+        while waited <= timeoutMs {
+            if AXLogicProElements.importPanel() == nil { return true }
+            guard await pause(ms: 100) else { return false }
+            waited += 100
+        }
+        return false
+    }
+
+    /// Result of the Go to folder step: an error (nil on success) and short trace notes.
+    struct GoToOutcome: Sendable {
+        let error: String?
+        let notes: [String]
+    }
+
+    /// With a panel showing: Cmd+Shift+G, then (only once the Go to text field is confirmed
+    /// through AX) Cmd+A, type `path`, Return. Never types blind. `path` may be a folder or a
+    /// file. When the field does not show up, Escape is pressed once and an error is returned
+    /// without having typed anything; the caller should cancel the panel if it is still up.
+    static func goToChecked(path: String) async -> GoToOutcome {
+        var notes: [String] = []
+        func fail(_ message: String) -> GoToOutcome {
+            GoToOutcome(error: message, notes: notes)
+        }
+        guard await ensureFrontmost() else {
+            return fail("Could not bring Logic Pro to the front")
+        }
+        let focusBefore = AXLogicProElements.focusedFieldSummary()
         let sheetsBefore = AXLogicProElements.allSheets().count
         guard postKeyGlobal(5, flags: [.maskCommand, .maskShift]) else {
-            return "Failed to post Cmd+Shift+G"
+            return fail("Failed to post Cmd+Shift+G")
         }
+
+        // Poll up to 3 s for a focused text field (not the search field) that is new.
         var waited = 0
-        var sheetAppeared = false
+        var fieldSummary: String?
+        var latest: String?
         while waited <= 3_000 {
-            guard await pause(ms: 100) else { return "Cancelled" }
+            guard await pause(ms: 100) else { return fail("Cancelled") }
             waited += 100
-            if AXLogicProElements.allSheets().count > sheetsBefore { sheetAppeared = true; break }
+            latest = AXLogicProElements.focusedFieldSummary()
+            if AXLogicProElements.focusedIsNonSearchTextField(),
+               latest != focusBefore || AXLogicProElements.allSheets().count > sheetsBefore {
+                fieldSummary = latest
+                break
+            }
         }
-        if !sheetAppeared {
-            Log.warn("Go to sheet not detected after Cmd+Shift+G; typing anyway", subsystem: "ax")
+        guard let fieldSummary else {
+            notes.append("go-to field not found, focus: \(latest ?? "none")")
+            await pressEscape()
+            return fail("The Go to folder field did not appear after Cmd+Shift+G (focus: \(latest ?? "none")); nothing was typed")
         }
-        guard await pause(ms: 200) else { return "Cancelled" }
-        guard await ensureFrontmost() else { return "Could not bring Logic Pro to the front" }
+        notes.append("go-to field: \(fieldSummary)")
+
+        guard await pause(ms: 150) else { return fail("Cancelled") }
+        guard await ensureFrontmost() else { return fail("Could not bring Logic Pro to the front") }
+        // Re-check right before typing: the focus must still be the confirmed field.
+        guard AXLogicProElements.focusedIsNonSearchTextField() else {
+            notes.append("focus left the go-to field before typing")
+            await pressEscape()
+            return fail("Focus left the Go to folder field before typing; nothing was typed")
+        }
         _ = postKeyGlobal(0, flags: .maskCommand) // select the pre-filled path
-        guard await pause(ms: 80) else { return "Cancelled" }
-        guard await typeTextGlobal(path) else { return "Failed to type the path" }
-        guard await pause(ms: 500) else { return "Cancelled" } // let the suggestion list update
-        guard await ensureFrontmost() else { return "Could not bring Logic Pro to the front" }
-        guard postKeyGlobal(36, flags: []) else { return "Failed to press Return in Go to Folder" }
-        // Wait for the sheet to close.
+        guard await pause(ms: 80) else { return fail("Cancelled") }
+        guard await typeTextGlobal(path) else { return fail("Failed to type the path") }
+        guard await pause(ms: 500) else { return fail("Cancelled") } // let the suggestion list update
+        let typed = AXLogicProElements.focusedFieldValue() ?? ""
+        let matches = typed == path
+        notes.append("typed \(path.count) chars, field now has \(typed.count) chars, matches=\(matches)")
+        let summaryAtReturn = AXLogicProElements.focusedFieldSummary()
+
+        guard await ensureFrontmost() else { return fail("Could not bring Logic Pro to the front") }
+        guard postKeyGlobal(36, flags: []) else { return fail("Failed to press Return in Go to Folder") }
+
+        // Poll up to 3 s for the field to go away (focus changes or the sheet closes).
         waited = 0
-        while waited <= 2_000 {
-            guard await pause(ms: 100) else { return "Cancelled" }
+        var gone = false
+        while waited <= 3_000 {
+            guard await pause(ms: 100) else { return fail("Cancelled") }
             waited += 100
-            if AXLogicProElements.allSheets().count <= sheetsBefore { break }
+            if AXLogicProElements.focusedFieldSummary() != summaryAtReturn
+                || !AXLogicProElements.focusedIsNonSearchTextField() {
+                gone = true
+                break
+            }
         }
-        guard await pause(ms: 300) else { return "Cancelled" }
-        return nil
+        notes.append(gone ? "go-to field closed" : "go-to field still focused 3 s after Return")
+        guard await pause(ms: 300) else { return fail("Cancelled") }
+        return GoToOutcome(error: nil, notes: notes)
+    }
+
+    /// With a panel showing: Cmd+Shift+G, enter `path`, Return (see goToChecked).
+    /// Returns nil on success, otherwise an error message.
+    static func goTo(path: String, pid: pid_t) async -> String? {
+        let outcome = await goToChecked(path: path)
+        if let error = outcome.error {
+            Log.warn("goTo failed: \(error); \(outcome.notes.joined(separator: "; "))", subsystem: "ax")
+        }
+        return outcome.error
     }
 
     /// Press the panel's confirm button (Import / Open / Save / default). Returns the pressed title.

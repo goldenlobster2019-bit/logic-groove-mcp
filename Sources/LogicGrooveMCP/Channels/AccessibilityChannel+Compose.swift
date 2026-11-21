@@ -17,16 +17,35 @@ extension AccessibilityChannel {
         case .success(let value): path = value
         case .failure(let message): return .error(message)
         }
-        guard let pid = ProcessUtils.logicProPID() else {
+        guard ProcessUtils.logicProPID() != nil else {
             return .error("Logic Pro is not running")
+        }
+        let fileName = (path as NSString).lastPathComponent
+        let barText = params["at_bar"].map { " at bar \($0)" } ?? ""
+
+        let tracksBefore = AXLogicProElements.trackHeaderCount()
+        let undoBefore = AXLogicProElements.undoMenuTitle()
+        if let existing = AXLogicProElements.filePanelSummary() {
+            return .error("A file panel is already open (\(existing)); close it and retry. Nothing was done.")
         }
         guard await FilePanelAutomation.ensureFrontmost() else {
             return .error("Could not bring Logic Pro to the front")
         }
 
+        var trace: [String] = []
+        func traceText() -> String { trace.joined(separator: "; ") }
+        func finish(_ message: String, isError: Bool) -> ChannelResult {
+            Log.info("midi.import_file: \(message)", subsystem: "ax")
+            return isError ? .error(message) : .success(message)
+        }
+        func bail(_ reason: String) -> ChannelResult {
+            if AXLogicProElements.cancelFilePanel() { trace.append("cancelled the panel") }
+            return finish("Import of \(fileName) failed: \(reason). Trace: \(traceText())", isError: true)
+        }
+
         switch AXLogicProElements.pressMenu(["File", "Import", "MIDI File"]) {
         case .pressed:
-            break
+            trace.append("menu pressed")
         case .notFound:
             let entries = AXLogicProElements.menuEntryTitles(path: ["File", "Import"])
             return .error("Menu item File > Import > MIDI File... not found. File > Import entries: \(entries.joined(separator: ", "))")
@@ -36,31 +55,87 @@ extension AccessibilityChannel {
             return .error("Failed to press menu item '\(title)'")
         }
 
-        guard await FilePanelAutomation.waitForPanel() else {
-            return .error("The MIDI import file panel did not appear within 5 seconds")
+        guard await FilePanelAutomation.waitForImportPanel() else {
+            let other = AXLogicProElements.filePanelSummary() ?? "none"
+            return finish("Import of \(fileName) failed: the import panel did not appear within 5 seconds (other panel: \(other)). Trace: \(traceText())", isError: true)
         }
-        if let failure = await FilePanelAutomation.goTo(path: path, pid: pid) {
-            return .error("Import panel: \(failure)")
-        }
+        trace.append("import panel up")
 
-        var pressed = "none (panel closed after Go to Folder)"
-        if AXLogicProElements.filePanel() != nil {
-            guard let title = FilePanelAutomation.confirmPanel(buttonTitles: ["Import", "Open"]) else {
-                return .error("Could not press the Import/Open button of the file panel (is the file selected and the button enabled?)")
+        // Strategy A: select the file through Accessibility, then press Import.
+        var pressed = false
+        let selection = AXLogicProElements.selectFileInPanel(named: fileName)
+        trace.append("A \(selection)")
+        guard await FilePanelAutomation.pause(ms: 400) else { return bail("cancelled") }
+        var buttonState = AXLogicProElements.panelConfirmButtonState(titles: ["Import", "Open"])
+        trace.append("A button \(buttonState)")
+        if buttonState.hasPrefix("enabled:") {
+            if let title = AXLogicProElements.pressImportPanelButton(titles: ["Import", "Open"]) {
+                trace.append("pressed '\(title)'")
+                pressed = true
+            } else {
+                trace.append("press failed")
             }
-            pressed = title
         }
-        _ = await FilePanelAutomation.waitForPanelToClose(timeoutMs: 3_000)
 
-        let tempoNote = await FilePanelAutomation.handleTempoDialog()
-        let fileName = (path as NSString).lastPathComponent
-        let barText = params["at_bar"].map { " at bar \($0)" } ?? ""
-        var message = "Imported \(fileName)\(barText) — verify region placement (pressed '\(pressed)')"
-        if let tempoNote {
-            message += "; \(tempoNote)"
+        // Strategy B: Go to sheet, only when A did not get the button pressed.
+        if !pressed {
+            let goTo = await FilePanelAutomation.goToChecked(path: path)
+            trace.append(contentsOf: goTo.notes.map { "B \($0)" })
+            if let error = goTo.error {
+                return bail(error)
+            }
+            if AXLogicProElements.importPanel() == nil {
+                trace.append("panel closed by Return")
+            } else {
+                buttonState = AXLogicProElements.panelConfirmButtonState(titles: ["Import", "Open"])
+                trace.append("B button \(buttonState)")
+                if !buttonState.hasPrefix("enabled:") {
+                    let again = AXLogicProElements.selectFileInPanel(named: fileName)
+                    trace.append("B \(again)")
+                    guard await FilePanelAutomation.pause(ms: 400) else { return bail("cancelled") }
+                    buttonState = AXLogicProElements.panelConfirmButtonState(titles: ["Import", "Open"])
+                    trace.append("B button \(buttonState)")
+                }
+                guard buttonState.hasPrefix("enabled:"),
+                      let title = AXLogicProElements.pressImportPanelButton(titles: ["Import", "Open"]) else {
+                    return bail("the Import button stayed disabled or could not be pressed")
+                }
+                trace.append("pressed '\(title)'")
+            }
         }
-        Log.info("midi.import_file: \(message)", subsystem: "ax")
-        return .unverified(message)
+
+        let closed = await FilePanelAutomation.waitForImportPanelToClose(timeoutMs: 3_000)
+        trace.append(closed ? "panel closed" : "panel still open 3 s later")
+        if let tempoNote = await FilePanelAutomation.handleTempoDialog() {
+            trace.append(tempoNote)
+        }
+
+        // Verify: more track headers, or a changed Undo title.
+        var tracksAfter = AXLogicProElements.trackHeaderCount()
+        var undoAfter = AXLogicProElements.undoMenuTitle()
+        var waited = 0
+        while tracksAfter <= tracksBefore && undoAfter == undoBefore && waited < 6_000 {
+            guard await FilePanelAutomation.pause(ms: 300) else { break }
+            waited += 300
+            tracksAfter = AXLogicProElements.trackHeaderCount()
+            undoAfter = AXLogicProElements.undoMenuTitle()
+        }
+        if AXLogicProElements.importPanel() != nil, AXLogicProElements.cancelFilePanel() {
+            trace.append("cancelled a leftover panel")
+        }
+        let undoOld = undoBefore ?? "none"
+        let undoNew = undoAfter ?? "none"
+        let verified = tracksAfter > tracksBefore || undoAfter != undoBefore
+        if verified {
+            return finish(
+                "Imported \(fileName)\(barText) (verified: tracks \(tracksBefore) -> \(tracksAfter), undo '\(undoOld)' -> '\(undoNew)'). Trace: \(traceText())",
+                isError: false
+            )
+        }
+        return finish(
+            "Import of \(fileName) was NOT confirmed (tracks \(tracksBefore) -> \(tracksAfter), undo '\(undoOld)' -> '\(undoNew)'). Trace: \(traceText())",
+            isError: true
+        )
     }
 
     // MARK: - MIDI export of the selected region
@@ -98,6 +173,7 @@ extension AccessibilityChannel {
             return .error("The export save panel did not appear within 5 seconds. \(selectMessage)")
         }
         if let failure = await FilePanelAutomation.goTo(path: directory.path, pid: pid) {
+            _ = AXLogicProElements.cancelFilePanel()
             return .error("Export panel: \(failure)")
         }
 

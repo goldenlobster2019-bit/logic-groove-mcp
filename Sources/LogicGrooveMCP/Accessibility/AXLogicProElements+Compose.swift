@@ -612,4 +612,274 @@ extension AXLogicProElements {
         let button: AXUIElement? = AXHelpers.getAttribute(window, kAXCloseButtonAttribute)
         return button
     }
+
+    // MARK: - Import panel, file selection, focus and diagnostics
+
+    /// The import panel: like filePanel() but only accepts a container that looks like a
+    /// file panel (Cancel + confirm button) or is titled "Import". An unrelated AXDialog
+    /// (for example Logic's "Go To Position" dialog) is never returned.
+    static func importPanel() -> AXUIElement? {
+        for window in dialogCandidates() {
+            let title = (AXHelpers.getTitle(window) ?? "").lowercased()
+            if title.contains(".logicx") { continue }
+            if title == "import" || looksLikeFilePanel(window) { return window }
+        }
+        return nil
+    }
+
+    /// Number of track header rows currently visible.
+    static func trackHeaderCount() -> Int {
+        allTrackHeaders().count
+    }
+
+    /// Whether a Logic window has exactly this title (case-insensitive).
+    static func hasWindow(titled title: String) -> Bool {
+        let wanted = title.lowercased()
+        for window in allWindows() where (AXHelpers.getTitle(window) ?? "").lowercased() == wanted {
+            return true
+        }
+        return false
+    }
+
+    /// Title and button titles of the file panel, for error messages. nil without a panel.
+    static func filePanelSummary() -> String? {
+        guard let panel = filePanel() else { return nil }
+        let title = AXHelpers.getTitle(panel) ?? "(no title)"
+        let buttons = buttonTitles(in: panel)
+        return "window '\(title)' with buttons [\(buttons.joined(separator: ", "))]"
+    }
+
+    private static func isSettable(_ element: AXUIElement, _ attribute: String) -> Bool {
+        var settable = DarwinBoolean(false)
+        let result = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
+        return result == .success && settable.boolValue
+    }
+
+    private static func parentElement(of element: AXUIElement) -> AXUIElement? {
+        let value: AXUIElement? = AXHelpers.getAttribute(element, kAXParentAttribute)
+        return value
+    }
+
+    /// Try the selection attributes along `chain` (match first, then its ancestors).
+    /// Returns a description of the call that succeeded, nil when none did.
+    private static func trySelect(chain: [AXUIElement], roles: [String]) -> String? {
+        if let index = roles.firstIndex(where: { $0 == kAXRowRole || $0 == kAXCellRole }) {
+            if AXHelpers.setAttribute(chain[index], kAXSelectedAttribute, kCFBooleanTrue) {
+                return "AXSelected on \(roles[index])"
+            }
+        }
+        if let index = roles.firstIndex(where: { $0 == kAXOutlineRole || $0 == kAXTableRole }), index > 0 {
+            let row = chain[index - 1]
+            if isSettable(chain[index], kAXSelectedRowsAttribute),
+               AXHelpers.setAttribute(chain[index], kAXSelectedRowsAttribute, [row] as CFArray) {
+                return "AXSelectedRows on \(roles[index])"
+            }
+        }
+        for index in roles.indices where index > 0 {
+            let role = roles[index]
+            guard role == kAXListRole || role == kAXBrowserRole || role == kAXGroupRole else { continue }
+            let item = chain[index - 1]
+            if isSettable(chain[index], kAXSelectedChildrenAttribute),
+               AXHelpers.setAttribute(chain[index], kAXSelectedChildrenAttribute, [item] as CFArray) {
+                return "AXSelectedChildren on \(role)"
+            }
+        }
+        return nil
+    }
+
+    /// Try to select `fileName` in the import panel with Accessibility only. Returns a
+    /// human-readable outcome starting with "selected", "found-not-selected" or "not-found".
+    /// "selected" means an attribute write succeeded; the caller must still check that the
+    /// panel's confirm button became enabled.
+    static func selectFileInPanel(named fileName: String) -> String {
+        guard let panel = importPanel() else { return "not-found (no import panel)" }
+        let wanted: Set<String> = [
+            fileName.lowercased(),
+            (fileName as NSString).deletingPathExtension.lowercased(),
+        ]
+        let all = AXHelpers.findAllDescendants(of: panel, role: nil, maxDepth: 14)
+        var matches: [AXUIElement] = []
+        for element in all {
+            var labels: [String] = []
+            if let title = AXHelpers.getTitle(element) { labels.append(title) }
+            if let value = AXHelpers.getValue(element) as? String { labels.append(value) }
+            if let description = AXHelpers.getDescription(element) { labels.append(description) }
+            if labels.contains(where: { wanted.contains($0.lowercased()) }) {
+                matches.append(element)
+            }
+        }
+        if matches.isEmpty { return "not-found (scanned \(all.count) elements)" }
+
+        var chains: [String] = []
+        for match in matches {
+            var chain: [AXUIElement] = [match]
+            var current = match
+            for _ in 0..<8 {
+                guard let up = parentElement(of: current) else { break }
+                chain.append(up)
+                current = up
+            }
+            let roles = chain.map { AXHelpers.getRole($0) ?? "?" }
+            let chainText = roles.joined(separator: ">")
+            if let outcome = trySelect(chain: chain, roles: roles) {
+                return "selected via \(outcome) (matches=\(matches.count), chain \(chainText))"
+            }
+            chains.append(chainText)
+        }
+        return "found-not-selected (matches=\(matches.count), chains \(chains.prefix(3).joined(separator: " | ")))"
+    }
+
+    /// State of the panel's confirm button: "enabled:<title>", "disabled:<title>" or "missing".
+    static func panelConfirmButtonState(titles: [String]) -> String {
+        guard let panel = importPanel() else { return "missing" }
+        let wanted = titles.map { $0.lowercased() }
+        for button in AXHelpers.findAllDescendants(of: panel, role: kAXButtonRole, maxDepth: 12) {
+            let title = AXHelpers.getTitle(button) ?? ""
+            if wanted.contains(title.lowercased()) {
+                return (isEnabled(button) ? "enabled:" : "disabled:") + title
+            }
+        }
+        return "missing"
+    }
+
+    /// Press the import panel's confirm button (no default-button fallback). Returns the pressed title.
+    static func pressImportPanelButton(titles: [String]) -> String? {
+        guard let panel = importPanel() else { return nil }
+        let wanted = titles.map { $0.lowercased() }
+        for button in AXHelpers.findAllDescendants(of: panel, role: kAXButtonRole, maxDepth: 12) {
+            let title = AXHelpers.getTitle(button) ?? ""
+            if wanted.contains(title.lowercased()) && isEnabled(button) {
+                if AXHelpers.performAction(button, kAXPressAction) { return title }
+            }
+        }
+        return nil
+    }
+
+    /// Press Cancel on the import panel (or, when there is none, on the file panel).
+    /// Returns true when a Cancel button was pressed.
+    static func cancelFilePanel() -> Bool {
+        guard let panel = importPanel() ?? filePanel() else { return false }
+        for button in AXHelpers.findAllDescendants(of: panel, role: kAXButtonRole, maxDepth: 12) {
+            if (AXHelpers.getTitle(button) ?? "").lowercased() == "cancel" && isEnabled(button) {
+                if AXHelpers.performAction(button, kAXPressAction) { return true }
+            }
+        }
+        return false
+    }
+
+    // MARK: Focus
+
+    /// The focused UI element: system-wide first (the Open/Save panels are hosted out of
+    /// process), then the Logic app element.
+    static func currentFocusedElement() -> AXUIElement? {
+        let systemWide = AXUIElementCreateSystemWide()
+        let focused: AXUIElement? = AXHelpers.getAttribute(systemWide, kAXFocusedUIElementAttribute)
+        if let focused { return focused }
+        return focusedElement()
+    }
+
+    private static func clip(_ text: String, _ limit: Int = 60) -> String {
+        text.count > limit ? String(text.prefix(limit)) + "..." : text
+    }
+
+    private static func stringValue(of element: AXUIElement) -> String? {
+        guard let value = AXHelpers.getValue(element) else { return nil }
+        if let text = value as? String { return text }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    /// "role/subrole value='<first 60 chars>'" of the focused element, nil if there is none.
+    static func focusedFieldSummary() -> String? {
+        guard let element = currentFocusedElement() else { return nil }
+        let role = AXHelpers.getRole(element) ?? "?"
+        let subrole: String = AXHelpers.getAttribute(element, kAXSubroleAttribute) ?? "-"
+        let value = stringValue(of: element) ?? ""
+        return "\(role)/\(subrole) value='\(clip(value))'"
+    }
+
+    /// Whether the focused element is a text field that is not a search field.
+    static func focusedIsNonSearchTextField() -> Bool {
+        guard let element = currentFocusedElement() else { return false }
+        guard isTextRole(AXHelpers.getRole(element)) else { return false }
+        let subrole: String? = AXHelpers.getAttribute(element, kAXSubroleAttribute)
+        return subrole != kAXSearchFieldSubrole
+    }
+
+    /// Full string value of the focused element, nil if unreadable.
+    static func focusedFieldValue() -> String? {
+        guard let element = currentFocusedElement() else { return nil }
+        return stringValue(of: element)
+    }
+
+    /// Role, subrole and title of the focused window of Logic Pro.
+    static func focusedWindowSummary() -> String {
+        guard let app = appRoot() else { return "Logic Pro AX root not available" }
+        let window: AXUIElement? = AXHelpers.getAttribute(app, kAXFocusedWindowAttribute)
+        guard let window else { return "no focused window" }
+        let role = AXHelpers.getRole(window) ?? "?"
+        let subrole: String = AXHelpers.getAttribute(window, kAXSubroleAttribute) ?? "-"
+        return "\(role)/\(subrole) title='\(AXHelpers.getTitle(window) ?? "")'"
+    }
+
+    // MARK: Subtree dump
+
+    private static func dumpLine(of element: AXUIElement, depth: Int) -> String {
+        let role = AXHelpers.getRole(element) ?? "?"
+        let subrole: String? = AXHelpers.getAttribute(element, kAXSubroleAttribute)
+        let title = AXHelpers.getTitle(element) ?? ""
+        let value = stringValue(of: element) ?? ""
+        let description = AXHelpers.getDescription(element) ?? ""
+        var line = String(repeating: "  ", count: depth) + role
+        if let subrole { line += "/\(subrole)" }
+        line += " \"\(clip(title))\" value='\(clip(value))' desc='\(clip(description))' enabled=\(isEnabled(element))"
+        let selected: NSNumber? = AXHelpers.getAttribute(element, kAXSelectedAttribute)
+        if let selected { line += " selected=\(selected.boolValue)" }
+        var settable: [String] = []
+        for (name, attribute) in [
+            ("AXSelected", kAXSelectedAttribute),
+            ("AXSelectedRows", kAXSelectedRowsAttribute),
+            ("AXSelectedChildren", kAXSelectedChildrenAttribute),
+            ("AXValue", kAXValueAttribute),
+            ("AXFocused", kAXFocusedAttribute),
+        ] where isSettable(element, attribute) {
+            settable.append(name)
+        }
+        line += " settable=[\(settable.joined(separator: ","))]"
+        return line
+    }
+
+    private static func dump(_ element: AXUIElement, depth: Int, maxDepth: Int, maxLines: Int, into lines: inout [String]) {
+        guard lines.count < maxLines else { return }
+        lines.append(dumpLine(of: element, depth: depth))
+        guard depth < maxDepth else { return }
+        for child in AXHelpers.getChildren(element) {
+            if lines.count >= maxLines { return }
+            dump(child, depth: depth + 1, maxDepth: maxDepth, maxLines: maxLines, into: &lines)
+        }
+    }
+
+    /// Text dump of the AX subtree of the current file panel, or of the focused window when
+    /// there is no panel (one line per element, indented by depth).
+    static func debugPanelDump(maxDepth: Int = 16, maxLines: Int = 300) -> String {
+        var lines: [String] = []
+        let root: AXUIElement?
+        if let panel = filePanel() {
+            lines.append("# file panel: \(AXHelpers.getTitle(panel) ?? "(no title)")")
+            root = panel
+        } else if let app = appRoot() {
+            let focusedWindow: AXUIElement? = AXHelpers.getAttribute(app, kAXFocusedWindowAttribute)
+            lines.append("# no file panel; focused window")
+            root = focusedWindow
+        } else {
+            root = nil
+        }
+        guard let root else {
+            lines.append("no element to dump")
+            return lines.joined(separator: "\n")
+        }
+        dump(root, depth: 0, maxDepth: maxDepth, maxLines: maxLines, into: &lines)
+        if lines.count >= maxLines { lines.append("... truncated at \(maxLines) lines") }
+        return lines.joined(separator: "\n")
+    }
 }

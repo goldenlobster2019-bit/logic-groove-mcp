@@ -1,15 +1,46 @@
 import Foundation
 import MCP
 
+private struct LiveState: Encodable {
+    let track_header_count: Int
+    let undo_title: String?
+    let file_panel_open: Bool
+    let windows: [String]
+
+    /// Hand-written so that a missing undo title is encoded as null, not omitted.
+    func encode(to encoder: Encoder) throws {
+        enum Keys: String, CodingKey {
+            case track_header_count, undo_title, file_panel_open, windows
+        }
+        var container = encoder.container(keyedBy: Keys.self)
+        try container.encode(track_header_count, forKey: .track_header_count)
+        try container.encode(undo_title, forKey: .undo_title)
+        try container.encode(file_panel_open, forKey: .file_panel_open)
+        try container.encode(windows, forKey: .windows)
+    }
+}
+
+private struct StateReport: Encodable {
+    let project: ProjectInfo
+    let transport: TransportState
+    let tracks: [TrackState]
+    let regions: [RegionState]
+    let live: LiveState
+}
+
 struct SystemDispatcher {
     static let tool = Tool(
         name: "logic_system",
         description: """
             Diagnostics and help for the Logic Groove MCP server. \
-            Commands: health, permissions, refresh_cache, debug_windows, help. \
+            Commands: health, permissions, refresh_cache, debug_windows, debug_panel, debug_focus, state, help. \
             Params by command: \
             help -> { category: String } (returns full param docs for a dispatcher); \
             refresh_cache -> {} (force AX re-poll); \
+            state -> {} (JSON: project, transport, tracks, regions from the cache, plus live: \
+            track_header_count, undo_title, file_panel_open, windows; use it to verify results); \
+            debug_panel -> {} (AX subtree dump of the open file panel, or of the focused window); \
+            debug_focus -> {} (focused element and focused window); \
             Others -> {}
             """,
         inputSchema: .object([
@@ -73,6 +104,29 @@ struct SystemDispatcher {
             let lines = AXLogicProElements.debugWindowSummary()
             return CallTool.Result(content: [.text(lines.joined(separator: "\n"))], isError: false)
 
+        case "debug_panel":
+            return CallTool.Result(content: [.text(AXLogicProElements.debugPanelDump())], isError: false)
+
+        case "debug_focus":
+            let focus = AXLogicProElements.focusedFieldSummary() ?? "none"
+            let text = "focused element: \(focus)\nfocused window: \(AXLogicProElements.focusedWindowSummary())"
+            return CallTool.Result(content: [.text(text)], isError: false)
+
+        case "state":
+            let report = StateReport(
+                project: await cache.getProject(),
+                transport: await cache.getTransport(),
+                tracks: await cache.getTracks(),
+                regions: await cache.getRegions(),
+                live: LiveState(
+                    track_header_count: AXLogicProElements.trackHeaderCount(),
+                    undo_title: AXLogicProElements.undoMenuTitle(),
+                    file_panel_open: AXLogicProElements.filePanel() != nil,
+                    windows: AXLogicProElements.allWindows().map { AXHelpers.getTitle($0) ?? "" }
+                )
+            )
+            return CallTool.Result(content: [.text(encodeJSON(report))], isError: false)
+
         case "refresh_cache":
             await cache.recordToolAccess()
             return CallTool.Result(
@@ -87,7 +141,7 @@ struct SystemDispatcher {
 
         default:
             return CallTool.Result(
-                content: [.text("Unknown system command: \(command). Available: health, permissions, refresh_cache, debug_windows, help")],
+                content: [.text("Unknown system command: \(command). Available: health, permissions, refresh_cache, debug_windows, debug_panel, debug_focus, state, help")],
                 isError: true
             )
         }
@@ -261,6 +315,9 @@ struct SystemDispatcher {
                   import_midi       -> { path: String, at_bar?: Int, loop?: Bool }
                   set_loop          -> { enabled: Bool } — Region inspector Loop checkbox
 
+                Verify results by reading logic_system state (track_header_count, undo_title).
+                An import_midi result is an error unless its message says "verified".
+
                 Files go to ~/Music/LogicGrooveMCP/Generated; region exports to
                 ~/Music/LogicGrooveMCP/Exports. Import uses File > Import > MIDI File via
                 Accessibility. Results include undo_label (the Edit menu's Undo title).
@@ -287,11 +344,17 @@ struct SystemDispatcher {
                   health            -> {} — Channel status + cache info
                   permissions       -> {} — macOS permission status
                   refresh_cache     -> {} — Force AX re-poll
+                  state             -> {} — JSON: project, transport, tracks, regions (cache) plus
+                                       live { track_header_count, undo_title, file_panel_open, windows }
+                  debug_windows     -> {} — Windows, buttons and whether a file panel is found
+                  debug_panel       -> {} — AX subtree dump of the open file panel (or focused window)
+                  debug_focus       -> {} — Focused element and focused window
                   help              -> { category: String } — Param docs per category
 
                 Categories: transport, tracks, mixer, midi, edit, navigate, project, compose, system
 
                 Read health via resource: logic://system/health
+                Prefer `state` over resources: MCP resources are not reachable from every client.
                 """
 
         default:

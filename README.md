@@ -67,9 +67,9 @@ logic_edit("last_undo", {})
 | `logic_edit` | undo, redo, cut, copy, paste, quantize, split, last_undo | `logic_edit("quantize", {value: "1/16"})` |
 | `logic_navigate` | goto_bar, markers, toggle_view, refresh_editor, open_piano_roll | `logic_navigate("goto_bar", {bar: 9})` |
 | `logic_project` | new, open, save, bounce, launch, quit | `logic_project("open", {path: "/path/to/song.logicx"})` |
-| `logic_system` | health, permissions, refresh_cache, help | `logic_system("help", {category: "compose"})` |
+| `logic_system` | health, permissions, refresh_cache, state, debug_panel, debug_focus, help | `logic_system("help", {category: "compose"})` |
 
-Resources (read-only): `logic://transport/state`, `logic://tracks`, `logic://tracks/{index}`, `logic://mixer`, `logic://project/info`, `logic://midi/ports`, `logic://system/health`.
+Prefer `logic_system("state")` for reading project, transport, tracks, regions and live AX facts (track count, Undo title, open panels): MCP resources are not reachable from every client. Resources (read-only): `logic://transport/state`, `logic://tracks`, `logic://tracks/{index}`, `logic://mixer`, `logic://project/info`, `logic://midi/ports`, `logic://system/health`.
 
 Full command reference: `logic_system("help", {category: "all"})`.
 
@@ -399,6 +399,8 @@ From a clone, `Scripts/install.sh` builds a universal binary, installs it to `/u
 ```bash
 ./Scripts/install.sh
 ```
+
+`Scripts/install-local.sh` installs to `~/.local/bin` and registers with the Claude desktop app. macOS ties the Accessibility permission to the code signature, so an unsigned rebuild loses it. The script signs with an "Apple Development" certificate if one exists, otherwise with a local self-signed code-signing certificate named "Logic Groove Signing" (Keychain Access > Certificate Assistant > Create a Certificate..., Identity Type "Self-Signed Root", Certificate Type "Code Signing"). Without either, re-add the binary under Accessibility after every rebuild.
 
 Outside a clone it downloads the latest release binary and verifies its SHA-256 checksum. Releases are produced by the tag-triggered workflow in `.github/workflows/release.yml`; until a release exists, build from source.
 

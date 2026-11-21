@@ -8,13 +8,13 @@ description: Use when producing house, deep house or dub techno in Logic Pro thr
 ## Workflow
 
 1. **Health**: `logic_system("health")` and `logic_system("permissions")`. Fix Accessibility/Automation before anything else. Logic must be running with a project open.
-2. **Look**: read `logic://tracks`, `logic://transport/state`, `logic://project/info` (tempo, existing tracks).
+2. **Look**: call `logic_system("state")` (project, transport, tracks, regions plus live track count and Undo title). The `logic://` resources (`logic://tracks`, `logic://transport/state`, `logic://project/info`) are an alternative where the client can read resources.
 3. **Analyze** what the user already has: select the stab or chord region, then `logic_compose("analyze_region")`. Read key, chords and `main_onsets`.
 4. **Pick the key**: take the analysis; otherwise the user's request; otherwise the genre default (dub techno F minor, deep house A minor, house A dorian).
 5. **Generate or write**: `generate` for a quick starting point, `complement` for a part that must fit the selected region (bass avoids stab onsets; chords follow the detected chord). Choose a style from `logic_compose("styles", {genre, part})`. When the user describes a specific sound, rhythm or progression, use `write` instead (see "Writing parts from a description").
 6. **Place**: use `at_bar` (default 1) and `loop: true` for repeating clips; or `import: false` and `import_midi` later.
 7. **Sound**: create a track first with `logic_tracks("create_instrument")` if needed, then `logic_mixer("insert_plugin", {track, slot: "instrument", name})`. Effects use slot 1+.
-8. **Verify** every mutation: read `undo_label` in the result or call `logic_edit("last_undo")`; re-read `logic://tracks`. Results marked unverified mean the action was performed but not confirmed.
+8. **Verify** every mutation: read `undo_label` in the result or call `logic_edit("last_undo")`; re-read `logic_system("state")`. Results marked unverified mean the action was performed but not confirmed. An `import_midi` result is an error unless its message says "verified"; its trace shows every step.
 9. Report the seed so the user can reproduce or vary the clip.
 
 Rules:
@@ -341,7 +341,7 @@ Style guidance:
 - **Clicking regions creates automation nodes**: automation view is on. Turn it off (toggle automation view in the Mix/View menu) and undo the stray nodes with `logic_edit("undo")` after checking `last_undo`.
 - **Tempo dialog appears on import**: a MIDI file with tempo meta triggers Logic's tempo import question. Generate without `tempo`; dismiss the dialog manually if it is open. Panel waits may take up to 3 s longer.
 - **Plugin demo nag** (u-he and others): a modal demo dialog blocks further automation. Ask the user to dismiss it, then retry.
-- **Import landed at the wrong bar or nothing appeared**: check `undo_label` and the tracks resource; move the region or retry `import_midi` with `at_bar`.
+- **Import landed at the wrong bar or nothing appeared**: check `undo_label` and `logic_system("state")`; move the region or retry `import_midi` with `at_bar`.
 - **Plugin did not load** (result unverified): look at the channel strip or `logic://mixer`, retry with the exact name from Logic's plugin menu.
 - **Permission errors**: grant Accessibility and Automation to the app that launched the server, then restart it.
 - **File panel problems**: ensure Logic is frontmost and no other sheet or dialog is open.

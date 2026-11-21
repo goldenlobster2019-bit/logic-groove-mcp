@@ -37,7 +37,12 @@ echo "Installed: $INSTALL_DIR/$BINARY_NAME"
 IDENTITY="${LOGIC_GROOVE_SIGN_IDENTITY:-}"
 if [[ -z "$IDENTITY" ]]; then
     IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
-        | sed -n 's/.*"\(Apple Development[^"]*\)".*/\1/p' | head -1)
+        | sed -n 's/.*"\(Apple Development[^"]*\)".*/\1/p' | head -1 || true)
+fi
+if [[ -z "$IDENTITY" ]]; then
+    # A local self-signed certificate is listed without -v (it is not marked valid).
+    IDENTITY=$(security find-identity -p codesigning 2>/dev/null \
+        | sed -n 's/.*"\(Logic Groove Signing\)".*/\1/p' | head -1 || true)
 fi
 if [[ -n "$IDENTITY" ]]; then
     codesign --force --sign "$IDENTITY" --identifier ro.goldenlobster.logic-groove-mcp \
@@ -45,6 +50,9 @@ if [[ -n "$IDENTITY" ]]; then
 else
     echo "NOTE: no code-signing certificate found; after each update re-add $BINARY_NAME in"
     echo "      System Settings > Privacy & Security > Accessibility (remove it, then add it again)."
+    echo "      To stop that: Keychain Access > Certificate Assistant > Create a Certificate..., Name"
+    echo "      \"Logic Groove Signing\", Identity Type \"Self-Signed Root\", Certificate Type \"Code Signing\";"
+    echo "      then run this installer again and re-add the binary under Accessibility one last time."
 fi
 
 # Register with the Claude desktop app: merge into the existing config, keep a backup.

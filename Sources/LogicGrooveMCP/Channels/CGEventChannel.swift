@@ -142,12 +142,33 @@ actor CGEventChannel: Channel {
             guard postKeyEvent(keyCode: 44, flags: [], pid: pid) else {
                 return .error("Failed to open Go To Position")
             }
-            do {
-                try await Task.sleep(for: .milliseconds(100))
-            } catch {
-                return .error("Cancelled before entering the Go To Position value")
+            // With Accessibility available, confirm the dialog before typing and afterwards
+            // check that it closed. Without it, fall back to the old fixed-delay behaviour.
+            let verify = PermissionChecker.checkAccessibility()
+            if verify {
+                var opened = false
+                for _ in 0..<40 {
+                    do {
+                        try await Task.sleep(for: .milliseconds(50))
+                    } catch {
+                        return .error("Cancelled before entering the Go To Position value")
+                    }
+                    if AXLogicProElements.hasWindow(titled: "Go To Position") {
+                        opened = true
+                        break
+                    }
+                }
+                guard opened else {
+                    return .error("Go To Position dialog did not open")
+                }
+            } else {
+                do {
+                    try await Task.sleep(for: .milliseconds(100))
+                } catch {
+                    return .error("Cancelled before entering the Go To Position value")
+                }
             }
-            // Focus can move during the 100ms wait, and Logic Pro would then
+            // Focus can move while waiting, and Logic Pro would then
             // discard the remaining events while postKeyEvent still reported
             // success. Re-check rather than assume the earlier activation held.
             guard await ensureFrontmost() else {
@@ -156,7 +177,26 @@ actor CGEventChannel: Channel {
             guard postText(position, pid: pid), postKeyEvent(keyCode: 36, flags: [], pid: pid) else {
                 return .error("Failed to enter Go To Position value")
             }
-            return .unverified("Go To Position was posted for \(position); Logic outcome is not verified")
+            guard verify else {
+                return .unverified("Go To Position was posted for \(position); Logic outcome is not verified")
+            }
+            var closed = false
+            for _ in 0..<40 {
+                do {
+                    try await Task.sleep(for: .milliseconds(50))
+                } catch {
+                    return .error("Cancelled while waiting for the Go To Position dialog to close")
+                }
+                if !AXLogicProElements.hasWindow(titled: "Go To Position") {
+                    closed = true
+                    break
+                }
+            }
+            if !closed {
+                _ = postKeyEvent(keyCode: 53, flags: [], pid: pid)
+                return .error("Go To Position dialog stayed open after Return; pressed Escape")
+            }
+            return .success("Playhead moved to \(position) via Go To Position")
         }
 
         guard let shortcut = Self.keyMap[operation] else {
