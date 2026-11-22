@@ -109,6 +109,8 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 - A hovered insert slot shows a power button at its left end: clicking it bypasses the plug-in (used to switch off the patch reverb on the sub track).
 - Session result: 8-bar loop in F minor (Fm9 x4, Dbmaj9 x2, Cm9 x2) on tracks 2-5 of the user's "Untitled" project: Diva stab + Tape Delay, Diva sub, Ultrabeat drums, Diva pad. The Stereo Out peaked at +3.8 dB, so levels need to come down.
 
+- Placement safety (0.4.0): `region.move_selected_to_track` continues past Edit > Cut only when the Edit menu's Undo title then contains "Cut"; otherwise it stops with the region still on the new track (no delete, no paste). If the first live test shows that title is not reliable here, the check has to be replaced, not removed.
+
 ## Known issues and unverified assumptions
 
 - Live test 2026-11-22 (Logic Pro 11): File > Import > MIDI File... opens a window (AXWindow, subrole AXDialog, title "Import", buttons Cancel and Import) whose content is hosted out of process; it opens in the last used folder and Import is disabled until a file is selected. The old flow (Cmd+Shift+G, Cmd+A, type, Return) closed the panel without importing anything while reporting `unverified`. Import now returns a trace and is `.error` unless the track count or the Edit menu Undo title changed.

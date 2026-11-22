@@ -77,6 +77,14 @@ extension AccessibilityChannel {
         }
         trace.append("Edit > Cut pressed")
         guard await FilePanelAutomation.pause(ms: 300) else { return .error("Cancelled") }
+        // Confirm the cut before anything is deleted or pasted: if it silently did nothing,
+        // deleting the temporary track would lose the region and Paste would insert stale
+        // clipboard content. The Edit menu then reads "Undo Cut ...".
+        let undoAfterCut = AXLogicProElements.undoMenuTitle() ?? "none"
+        trace.append("undo title after cut '\(undoAfterCut)'")
+        guard undoAfterCut.lowercased().contains("cut") else {
+            return .error("The cut was not confirmed (Edit menu shows '\(undoAfterCut)'); nothing was deleted or pasted, the region stays on the new track \(newIndex). Trace: \(traceText())")
+        }
 
         // 2. Delete the empty temporary track, only with a verified selection.
         let temporary = await selectTrackVerified(index: newIndex)
