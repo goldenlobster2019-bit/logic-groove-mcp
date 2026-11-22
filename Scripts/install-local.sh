@@ -3,8 +3,16 @@
 # (and Claude Code, if installed). No sudo: the binary goes to ~/.local/bin.
 #
 # Usage (from anywhere):
-#   bash ~/Work/logic-groove-mcp/Scripts/install-local.sh
+#   bash ~/Work/logic-groove-mcp/Scripts/install-local.sh [--restart-claude]
+# Or double-click Install.command in the project folder (builds, installs, restarts Claude).
+#   --restart-claude  quit and reopen the Claude desktop app at the end so it starts the new server
 set -euo pipefail
+
+RESTART_CLAUDE=0
+for arg in ${1+"$@"}; do
+    if [[ "$arg" == "--restart-claude" ]]; then RESTART_CLAUDE=1; fi
+done
+SIGNED=0
 
 BINARY_NAME="LogicGrooveMCP"
 SERVER_KEY="logic-groove"
@@ -46,7 +54,8 @@ if [[ -z "$IDENTITY" ]]; then
 fi
 if [[ -n "$IDENTITY" ]]; then
     codesign --force --sign "$IDENTITY" --identifier ro.goldenlobster.logic-groove-mcp \
-        "$INSTALL_DIR/$BINARY_NAME" && echo "Signed with: $IDENTITY (Accessibility permission survives updates)"
+        "$INSTALL_DIR/$BINARY_NAME" && SIGNED=1 \
+        && echo "Signed with: $IDENTITY (Accessibility permission survives updates)"
 else
     echo "NOTE: no code-signing certificate found; after each update re-add $BINARY_NAME in"
     echo "      System Settings > Privacy & Security > Accessibility (remove it, then add it again)."
@@ -81,6 +90,24 @@ echo ""
 echo "Permissions check:"
 "$INSTALL_DIR/$BINARY_NAME" --check-permissions 2>&1 || true
 echo ""
-echo "Done. Quit and reopen the Claude app so it starts the server."
-echo "If Accessibility/Automation show as missing: System Settings > Privacy & Security >"
-echo "Accessibility and Automation, enable Claude (and $BINARY_NAME if listed)."
+if [[ "$RESTART_CLAUDE" == "1" ]]; then
+    if [[ "$SIGNED" != "1" ]]; then
+        # Unsigned build: the Accessibility entry has to be re-added by hand before the restart.
+        echo "ACTION NEEDED: in the Accessibility list that opens now, remove $BINARY_NAME, then add"
+        echo "  $INSTALL_DIR/$BINARY_NAME  (press Cmd+Shift+G in the file dialog and paste that path)."
+        open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" 2>/dev/null || true
+        read -r -p "Press Return here when that is done... " _ || true
+    fi
+    echo "Restarting the Claude app..."
+    osascript -e 'tell application "Claude" to quit' >/dev/null 2>&1 || true
+    for _ in $(seq 1 30); do
+        pgrep -x Claude >/dev/null 2>&1 || break
+        sleep 0.5
+    done
+    open -a Claude 2>/dev/null || echo "Could not reopen Claude automatically; open it yourself."
+    echo "Done."
+else
+    echo "Done. Quit and reopen the Claude app so it starts the server."
+    echo "If Accessibility/Automation show as missing: System Settings > Privacy & Security >"
+    echo "Accessibility and Automation, enable Claude (and $BINARY_NAME if listed)."
+fi

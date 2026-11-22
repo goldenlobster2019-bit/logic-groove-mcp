@@ -46,6 +46,7 @@ MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write elec
 - Accessibility must be re-granted after each rebuild unless the binary is signed with a stable identity (an Apple Development certificate or a self-signed "Logic Groove Signing" certificate; `Scripts/install-local.sh` picks either).
 - The AX/CGEvent/CoreMIDI code cannot be compiled on Linux. macOS CI (`macos-15`, `swift build -c release` + `swift test`) is the only compile check. Push and read CI before trusting server changes.
 - CI also runs a Linux job in the `swift:6.0` container.
+- Local install on the Mac: double-click `Install.command` (runs `Scripts/install-local.sh --restart-claude`: build, install to ~/.local/bin, sign if an identity exists, restart the Claude app; for an unsigned build it opens the Accessibility pane and waits). The agent cannot run macOS commands, change privacy settings or restart Claude itself, so this stays a user step.
 
 ## History
 
