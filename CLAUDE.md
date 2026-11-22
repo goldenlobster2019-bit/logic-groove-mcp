@@ -81,6 +81,18 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 - MCP resources (logic://...) are not reachable through the Claude desktop device bridge; tools only.
 - The installed binary lost Accessibility after every unsigned rebuild; the user re-adds it by hand. `Install.command` was used for the last install.
 
+## Sound assignment, learned by hand on 2026-11-22 (not yet in the server)
+
+- `logic_mixer insert_plugin` FAILS on the instrument slot: "Could not open the slot menu (neither AXShowMenu nor AXPress worked on AXButton[title=, desc=list])". An AXPress on that same `list` button from another tool does open the menu, so the press works but the server does not find the opened menu.
+- Working keyboard flow once the slot menu is open (Logic frontmost): the menu has a Search field with focus; type the plug-in name ("Diva"), Down (highlights the single result), Right (opens the Stereo / Multi-Output submenu), Return. The plug-in window opens.
+- Diva is installed as a DEMO (1.4.8, AU). Every new instance shows a "Thank you for trying our software" notice that must be closed (X at its top right) before anything else. The user wants Diva used anyway.
+- Diva presets are chosen in its own PRESETS tab (custom drawn UI: search field, double-click a result). Local presets live in /Library/Audio/Presets/u-he/Diva (folders 1 BASS ... 8 TEMPLATES, MIDI Programs, THIRD PARTY; 1432 presets). The "MIDI Programs" folder exists: presets placed there are selectable by MIDI Program Change (u-he feature, loaded when the host starts), which is the planned way to pick presets without the UI. Folder access to the preset folders was refused to the agent; the user has to add the folder himself if presets are to be read or written.
+- Presets used for the first audible test: stab "HS Stabz" (poly brass-like stab), sub "MK Bass Sub Tri", pad "IW Lush PWM Pad".
+- A track takes the name of the loaded plug-in setting (track 2 became "HS Stabz").
+- Logic's sound library is mostly NOT downloaded on this Mac (Library items show a download badge; AX description starts with "downloadable"). Ultrabeat has no factory kits (settings menu only offers Load/Save), so its init kit is used.
+- Ultrabeat init kit mapping (NOT GM): C1 sine, C#1 kick, D1 snare, D#1 hat 1, E1 hat 2, F1 tom, F#1 claps, G1 perc, G#1 shaker, A1 bass, A#1 sample; voice 25 is a chromatic bass from C3 up. Drum clips for it must use these notes, not the GM drum names.
+- Every import lands on a new track with the default instrument, so the instrument has to be set after each import (or the region moved to an existing track). `transport.set_cycle_range` is not implemented.
+
 ## Known issues and unverified assumptions
 
 - Live test 2026-11-22 (Logic Pro 11): File > Import > MIDI File... opens a window (AXWindow, subrole AXDialog, title "Import", buttons Cancel and Import) whose content is hosted out of process; it opens in the last used folder and Import is disabled until a file is selected. The old flow (Cmd+Shift+G, Cmd+A, type, Return) closed the panel without importing anything while reporting `unverified`. Import now returns a trace and is `.error` unless the track count or the Edit menu Undo title changed.
