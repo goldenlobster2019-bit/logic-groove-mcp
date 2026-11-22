@@ -281,25 +281,19 @@ extension AccessibilityChannel {
         }
         trace.append("select track \(index): selected now \(current.map(String.init) ?? "unknown")")
 
-        func recheck(_ label: String) async -> Bool? {
-            guard await FilePanelAutomation.pause(ms: 200) else { return nil }
-            current = AXLogicProElements.selectedTrackIndex()
-            let nowText = current.map(String.init) ?? "unknown"
-            trace.append("\(label) -> selected \(nowText)")
-            return current == index
-        }
-
         // 1. The existing AX way.
         let pressed = selectTrack(params: ["index": String(index)])
-        guard let first = await recheck("AXPress \(pressed.isSuccess ? "ok" : "failed")") else {
-            return (false, trace + ["cancelled"])
-        }
-        if first { return (true, trace) }
+        guard await FilePanelAutomation.pause(ms: 200) else { return (false, trace + ["cancelled"]) }
+        current = AXLogicProElements.selectedTrackIndex()
+        trace.append("AXPress \(pressed.isSuccess ? "ok" : "failed") -> selected \(current.map(String.init) ?? "unknown")")
+        if current == index { return (true, trace) }
 
         // 2. AXSelected on the header.
         let attribute = AXLogicProElements.setTrackHeaderSelected(index: index)
-        guard let second = await recheck(attribute) else { return (false, trace + ["cancelled"]) }
-        if second { return (true, trace) }
+        guard await FilePanelAutomation.pause(ms: 200) else { return (false, trace + ["cancelled"]) }
+        current = AXLogicProElements.selectedTrackIndex()
+        trace.append("\(attribute) -> selected \(current.map(String.init) ?? "unknown")")
+        if current == index { return (true, trace) }
 
         // 3. Arrow keys, relative to the known selection.
         if let known = current, let pid = ProcessUtils.logicProPID() {
@@ -313,10 +307,10 @@ extension AccessibilityChannel {
                         _ = FilePanelAutomation.postKey(keyCode, flags: [], pid: pid)
                         guard await FilePanelAutomation.pause(ms: 60) else { return (false, trace + ["cancelled"]) }
                     }
-                    guard let third = await recheck("arrow \(delta > 0 ? "Down" : "Up") x\(abs(delta))") else {
-                        return (false, trace + ["cancelled"])
-                    }
-                    if third { return (true, trace) }
+                    guard await FilePanelAutomation.pause(ms: 200) else { return (false, trace + ["cancelled"]) }
+                    current = AXLogicProElements.selectedTrackIndex()
+                    trace.append("arrow \(delta > 0 ? "Down" : "Up") x\(abs(delta)) -> selected \(current.map(String.init) ?? "unknown")")
+                    if current == index { return (true, trace) }
                 }
             } else {
                 trace.append("arrow keys skipped: Logic Pro could not be brought to the front")
@@ -331,10 +325,10 @@ extension AccessibilityChannel {
         } else if let point = AXLogicProElements.trackHeaderClickPoint(index: index) {
             if await FilePanelAutomation.ensureFrontmost() {
                 let clicked = await FilePanelAutomation.clickGlobal(at: point)
-                guard let fourth = await recheck("click at (\(Int(point.x)),\(Int(point.y))) \(clicked ? "posted" : "failed")") else {
-                    return (false, trace + ["cancelled"])
-                }
-                if fourth { return (true, trace) }
+                guard await FilePanelAutomation.pause(ms: 200) else { return (false, trace + ["cancelled"]) }
+                current = AXLogicProElements.selectedTrackIndex()
+                trace.append("click at (\(Int(point.x)),\(Int(point.y))) \(clicked ? "posted" : "failed") -> selected \(current.map(String.init) ?? "unknown")")
+                if current == index { return (true, trace) }
             } else {
                 trace.append("click skipped: Logic Pro could not be brought to the front")
             }
@@ -346,6 +340,12 @@ extension AccessibilityChannel {
     }
 
     // MARK: - Plugin insertion
+
+    /// Press Escape once (closes a possibly open menu) and return an error carrying the trace.
+    private func failWithEscape(trace: [String], reason: String) async -> ChannelResult {
+        await FilePanelAutomation.pressEscape()
+        return .error("\(reason). Trace: \((trace + ["pressed Escape"]).joined(separator: "; "))")
+    }
 
     /// Insert a plug-in through the Inspector slot menu: press the slot, type the name into the menu's
     /// search field, Down / Right / Return, then confirm by the new plug-in window. Never types or
@@ -408,11 +408,6 @@ extension AccessibilityChannel {
         guard await FilePanelAutomation.ensureFrontmost() else {
             return .error("Could not bring Logic Pro to the front. Trace: \(traceText())")
         }
-        func fail(_ reason: String) async -> ChannelResult {
-            await FilePanelAutomation.pressEscape()
-            trace.append("pressed Escape")
-            return .error("\(reason). Trace: \(traceText())")
-        }
 
         // 3. Press the slot and wait for the menu's search field to take the focus.
         let titlesBefore = AXLogicProElements.windowTitles()
@@ -425,7 +420,7 @@ extension AccessibilityChannel {
         for attempt in 0..<2 {
             let press = AXLogicProElements.pressPluginSlot(slot: slot, forcePress: forcePress)
             guard press.found else {
-                return await fail("Cannot find the \(slotLabel) in the Inspector channel strip (candidates seen: \(press.diagnostic))")
+                return await failWithEscape(trace: trace, reason: "Cannot find the \(slotLabel) in the Inspector channel strip (candidates seen: \(press.diagnostic))")
             }
             trace.append(press.traceText)
             let limitMs = (attempt == 0 && press.method == "AXShowMenu") ? 1_500 : 3_000
@@ -449,34 +444,34 @@ extension AccessibilityChannel {
             break
         }
         guard let fieldSummary = foundField else {
-            return await fail("The slot menu did not open or has no search field (\(AXLogicProElements.openedMenuSummary()); focus now: \(AXLogicProElements.focusedFieldSummary() ?? "none"))")
+            return await failWithEscape(trace: trace, reason: "The slot menu did not open or has no search field (\(AXLogicProElements.openedMenuSummary()); focus now: \(AXLogicProElements.focusedFieldSummary() ?? "none"))")
         }
         trace.append("menu search field focused: \(fieldSummary)")
 
         // 4. Type the name and read it back.
-        guard await FilePanelAutomation.ensureFrontmost() else { return await fail("Could not bring Logic Pro to the front") }
-        guard await FilePanelAutomation.typeTextGlobal(pluginName) else { return await fail("Failed to type the plug-in name") }
+        guard await FilePanelAutomation.ensureFrontmost() else { return await failWithEscape(trace: trace, reason: "Could not bring Logic Pro to the front") }
+        guard await FilePanelAutomation.typeTextGlobal(pluginName) else { return await failWithEscape(trace: trace, reason: "Failed to type the plug-in name") }
         guard await FilePanelAutomation.pause(ms: 500) else { return .error("Cancelled") }
         let typed = (AXLogicProElements.focusedFieldValue() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         trace.append("typed '\(pluginName)', field holds '\(String(typed.prefix(60)))'")
         guard typed.lowercased() == pluginName.lowercased() else {
-            return await fail("The search field does not hold the typed name ('\(String(typed.prefix(60)))'); nothing was selected")
+            return await failWithEscape(trace: trace, reason: "The search field does not hold the typed name ('\(String(typed.prefix(60)))'); nothing was selected")
         }
 
         // 5. Down (result_index times), Right (submenu), Down (variant_index - 1 times), Return.
-        guard await FilePanelAutomation.ensureFrontmost() else { return await fail("Could not bring Logic Pro to the front") }
+        guard await FilePanelAutomation.ensureFrontmost() else { return await failWithEscape(trace: trace, reason: "Could not bring Logic Pro to the front") }
         for _ in 0..<resultIndex {
-            guard FilePanelAutomation.postKeyGlobal(125, flags: []) else { return await fail("Failed to post Down") }
+            guard FilePanelAutomation.postKeyGlobal(125, flags: []) else { return await failWithEscape(trace: trace, reason: "Failed to post Down") }
             guard await FilePanelAutomation.pause(ms: 60) else { return .error("Cancelled") }
         }
         guard await FilePanelAutomation.pause(ms: 150) else { return .error("Cancelled") }
-        guard FilePanelAutomation.postKeyGlobal(124, flags: []) else { return await fail("Failed to post Right") }
+        guard FilePanelAutomation.postKeyGlobal(124, flags: []) else { return await failWithEscape(trace: trace, reason: "Failed to post Right") }
         guard await FilePanelAutomation.pause(ms: 250) else { return .error("Cancelled") }
         for _ in 0..<(variantIndex - 1) {
-            guard FilePanelAutomation.postKeyGlobal(125, flags: []) else { return await fail("Failed to post Down") }
+            guard FilePanelAutomation.postKeyGlobal(125, flags: []) else { return await failWithEscape(trace: trace, reason: "Failed to post Down") }
             guard await FilePanelAutomation.pause(ms: 60) else { return .error("Cancelled") }
         }
-        guard FilePanelAutomation.postKeyGlobal(36, flags: []) else { return await fail("Failed to post Return") }
+        guard FilePanelAutomation.postKeyGlobal(36, flags: []) else { return await failWithEscape(trace: trace, reason: "Failed to post Return") }
         trace.append("keys: Down x\(resultIndex), Right, Down x\(variantIndex - 1), Return")
 
         // 6. Confirm by the new plug-in window.
@@ -489,7 +484,7 @@ extension AccessibilityChannel {
             if !newTitles.isEmpty { break }
         }
         guard !newTitles.isEmpty else {
-            return await fail("Plug-in '\(pluginName)' was not confirmed (no new plug-in window within 5 seconds)")
+            return await failWithEscape(trace: trace, reason: "Plug-in '\(pluginName)' was not confirmed (no new plug-in window within 5 seconds)")
         }
         let windowTitle = newTitles.joined(separator: " | ")
         trace.append("new window: '\(windowTitle)' after \(waited) ms")
