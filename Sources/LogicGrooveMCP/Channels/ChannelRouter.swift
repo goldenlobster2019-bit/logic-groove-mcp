@@ -46,6 +46,9 @@ actor ChannelRouter {
 
         // Mixer — OSC primary for continuous, AX fallback
         "mixer.get_state":            [.accessibility],
+        "mixer.strip":                [.accessibility],
+        "mixer.set_volume_db":        [.accessibility],
+        "mixer.set_master_volume_db": [.accessibility],
         "mixer.set_volume":           [.osc, .accessibility],
         "mixer.set_pan":              [.osc, .accessibility],
         "mixer.set_send":             [.osc, .accessibility],

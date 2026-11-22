@@ -151,36 +151,6 @@ extension AXLogicProElements {
         inspectorChannelStrip() != nil
     }
 
-    /// Find the slot button and press it. The press call may block while the pop-up menu is tracking
-    /// and then report an error after the messaging timeout with the menu open, so a short timeout is
-    /// set on the element and the returned code is only recorded, never trusted.
-    /// `forcePress` skips AXShowMenu even when the element lists it.
-    static func pressPluginSlot(slot: Int, forcePress: Bool) -> SlotPressOutcome {
-        guard let strip = inspectorChannelStrip() else {
-            return SlotPressOutcome(found: false, candidateCount: 0, chosen: "none", method: "none", resultCode: 0,
-                                    actions: "", diagnostic: "no Inspector channel strip")
-        }
-        let candidates = slotCandidates(in: strip)
-        guard let element = pluginSlotButton(slot: slot, candidates: candidates) else {
-            return SlotPressOutcome(found: false, candidateCount: candidates.count, chosen: "none", method: "none",
-                                    resultCode: 0, actions: "", diagnostic: diagnostic(of: candidates))
-        }
-        var names: CFArray?
-        var actions: [String] = []
-        if AXUIElementCopyActionNames(element, &names) == .success, let list = names as? [String] {
-            actions = list
-        }
-        let useShowMenu = !forcePress && actions.contains(kAXShowMenuAction)
-        let action: String = useShowMenu ? kAXShowMenuAction : kAXPressAction
-        _ = AXUIElementSetMessagingTimeout(element, 0.7)
-        let code = AXUIElementPerformAction(element, action as CFString)
-        _ = AXUIElementSetMessagingTimeout(element, 0) // back to the global default
-        return SlotPressOutcome(
-            found: true, candidateCount: candidates.count, chosen: describe(element),
-            method: useShowMenu ? "AXShowMenu" : "AXPress", resultCode: code.rawValue,
-            actions: actions.joined(separator: ","), diagnostic: "")
-    }
-
     /// Whether a pop-up menu is visible to AX (app-level or window-level), for failure traces.
     static func openedMenuSummary() -> String {
         guard let app = appRoot() else { return "Logic Pro AX root not available" }
@@ -197,6 +167,11 @@ extension AXLogicProElements {
         guard let strip = inspectorChannelStrip() else {
             lines.append("no Inspector channel strip found (is the Inspector visible?)")
             return lines.joined(separator: "\n")
+        }
+        if let model = stripModel() {
+            lines.append("stripModel: \(model.compactJSON())")
+        } else {
+            lines.append("stripModel: nil (no selected-track item)")
         }
         let candidates = slotCandidates(in: strip)
         lines.append("slot candidates (\(candidates.count)):")

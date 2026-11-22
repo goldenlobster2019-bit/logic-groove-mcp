@@ -146,4 +146,47 @@ enum ComposeSupport {
     static func menuTitleHasPrefix(_ title: String, _ wanted: String) -> Bool {
         normalizeMenuTitle(title).hasPrefix(normalizeMenuTitle(wanted))
     }
+
+    // MARK: - Levels and plug-in names
+
+    /// Parse a Logic level text into dB: "0,0 dB" -> 0, "-7,9 dB" -> -7.9, "3.9 dB" -> 3.9,
+    /// "-\u{221E} dB" -> -infinity. nil when the text is not a level.
+    static func parseDecibels(_ text: String) -> Double? {
+        var s = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !s.isEmpty else { return nil }
+        s = s.replacingOccurrences(of: "\u{2212}", with: "-")
+        if s.hasSuffix("db") {
+            s = String(s.dropLast(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        s = s.replacingOccurrences(of: " ", with: "")
+        if s.contains("\u{221E}") || s == "-inf" || s == "inf" || s == "-infinity" {
+            return -Double.infinity
+        }
+        s = s.replacingOccurrences(of: ",", with: ".")
+        if s.hasPrefix("+") { s.removeFirst() }
+        return Double(s)
+    }
+
+    /// The text after the first ", " of an AX title: "volume fader level, 0,0 dB" -> "0,0 dB".
+    /// nil when there is no comma or nothing follows it ("peak level meter" -> nil).
+    static func textAfterFirstComma(_ title: String) -> String? {
+        guard let range = title.range(of: ", ") else { return nil }
+        let rest = title[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return rest.isEmpty ? nil : rest
+    }
+
+    /// Case-insensitive substring match in either direction ("Tape Delay" vs "tape").
+    static func pluginNameMatches(_ actual: String, _ wanted: String) -> Bool {
+        let a = actual.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let w = wanted.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !a.isEmpty, !w.isEmpty else { return false }
+        return a.contains(w) || w.contains(a)
+    }
+
+    /// Number of non-hidden entries directly inside a folder (0 when it cannot be read).
+    static func nonHiddenEntryCount(in directory: URL) -> Int {
+        let urls = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+        return urls?.count ?? 0
+    }
 }

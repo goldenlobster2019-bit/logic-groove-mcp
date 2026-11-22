@@ -206,26 +206,38 @@ struct SystemDispatcher {
         case "mixer":
             return """
                 logic_mixer commands:
-                  set_volume        -> { track: Int, value: Float } (0.0-1.0)
+                  strip             -> { track?: Int } — JSON of the channel strip (instrument and effects
+                                       top to bottom with bypass state, volume text, peak text, clipping,
+                                       Stereo Out volume and peak). Use it to see levels.
+                  set_volume        -> { track?: Int, db: Float (-60..6) } — fader searched until the
+                                       read-back is within 0.15 dB (success within 0.3 dB);
+                                       old form: { track: Int, value: Float } (0.0-1.0)
                   set_pan           -> { track: Int, value: Float } (-1.0 to 1.0)
                   set_send          -> { track: Int, bus: Int, value: Float }
                   set_output        -> { track: Int, output: String }
                   set_input         -> { track: Int, input: String }
-                  set_master_volume -> { value: Float }
+                  set_master_volume -> { db: Float (-60..6) } (Stereo Out of the Inspector)
+                                       or old form { value: Float }
                   toggle_eq         -> { track: Int }
                   reset_strip       -> { track: Int }
-                  insert_plugin     -> { track?: Int (0-based), slot: Int (0/"instrument" = instrument,
-                                       1+ = audio effect slot), name: String,
+                  insert_plugin     -> { track?: Int (0-based), slot?: "instrument" / 0 = instrument,
+                                       "new" / "add" / "append" or omitted = ADD an effect in the empty
+                                       slot, n >= 1 = REPLACE the n-th existing effect (top to bottom;
+                                       n beyond the effect count means "new"), name: String,
                                        result_index? (default 1: Down presses in the search results),
                                        variant_index? (default 1: submenu entry, 1 = Stereo),
                                        close_window?: Bool }
                                        `track` is selected and read back first; if that fails nothing
                                        is changed. Keyboard-driven (type, Down, Right, Return),
-                                       confirmed by the new plug-in window. Message has a step trace;
+                                       confirmed by the new plug-in window and by the strip structure.
+                                       Message has `chain: <instrument> | <effects>` and a step trace;
                                        result includes undo_label.
-                                       Example: { "track": 2, "slot": 0, "name": "Diva" }
-                                       Example: { "track": 2, "slot": 1, "name": "Tape Delay" }
-                  bypass_plugin     -> { track: Int, slot: Int, bypassed: Bool }
+                                       Example: { "track": 2, "slot": "instrument", "name": "Diva" }
+                                       Example: { "track": 2, "name": "Tape Delay" } (adds an effect)
+                                       Example: { "track": 2, "slot": 1, "name": "Tape Delay" } (replaces effect 1)
+                  bypass_plugin     -> { track?: Int, plugin?: String (name substring) or slot?: Int
+                                       (0 = instrument, n = n-th effect), bypassed: Bool } — pressed only
+                                       when the state differs, read back
 
                 Read state via resource: logic://mixer
                 """

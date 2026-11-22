@@ -77,4 +77,75 @@ final class ComposeSupportTests: XCTestCase {
             XCTFail("mustExist=false should accept: \(message)")
         }
     }
+
+    func testParseDecibels() {
+        XCTAssertEqual(ComposeSupport.parseDecibels("0,0 dB"), 0.0)
+        XCTAssertEqual(ComposeSupport.parseDecibels("-7,9 dB") ?? 99, -7.9, accuracy: 0.0001)
+        XCTAssertEqual(ComposeSupport.parseDecibels("3,9 dB") ?? 99, 3.9, accuracy: 0.0001)
+        XCTAssertEqual(ComposeSupport.parseDecibels("-6.5 dB") ?? 99, -6.5, accuracy: 0.0001)
+        XCTAssertEqual(ComposeSupport.parseDecibels("-12,0dB") ?? 99, -12.0, accuracy: 0.0001)
+        XCTAssertEqual(ComposeSupport.parseDecibels("+1,5 dB") ?? 99, 1.5, accuracy: 0.0001)
+        XCTAssertEqual(ComposeSupport.parseDecibels("\u{2212}2,0 dB") ?? 99, -2.0, accuracy: 0.0001)
+        XCTAssertEqual(ComposeSupport.parseDecibels("-\u{221E} dB"), -Double.infinity)
+        XCTAssertNil(ComposeSupport.parseDecibels(""))
+        XCTAssertNil(ComposeSupport.parseDecibels("loud"))
+        XCTAssertNil(ComposeSupport.parseDecibels("dB"))
+    }
+
+    func testTextAfterFirstComma() {
+        XCTAssertEqual(ComposeSupport.textAfterFirstComma("volume fader level, 0,0 dB"), "0,0 dB")
+        XCTAssertEqual(ComposeSupport.textAfterFirstComma("peak level meter, -7,9 dB"), "-7,9 dB")
+        XCTAssertNil(ComposeSupport.textAfterFirstComma("peak level meter"))
+        XCTAssertNil(ComposeSupport.textAfterFirstComma("peak level meter, "))
+    }
+
+    func testPluginNameMatches() {
+        XCTAssertTrue(ComposeSupport.pluginNameMatches("Tape Delay", "tape delay"))
+        XCTAssertTrue(ComposeSupport.pluginNameMatches("Tape Delay", "Tape"))
+        XCTAssertTrue(ComposeSupport.pluginNameMatches("Diva", "Diva (Stereo)"))
+        XCTAssertFalse(ComposeSupport.pluginNameMatches("Compressor", "Tape Delay"))
+        XCTAssertFalse(ComposeSupport.pluginNameMatches("", "Diva"))
+        XCTAssertFalse(ComposeSupport.pluginNameMatches("Diva", " "))
+    }
+
+    func testNonHiddenEntryCount() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lgmcp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(ComposeSupport.nonHiddenEntryCount(in: dir), 0)
+        try Data().write(to: dir.appendingPathComponent("clip.mid"))
+        try Data().write(to: dir.appendingPathComponent(".DS_Store"))
+        XCTAssertEqual(ComposeSupport.nonHiddenEntryCount(in: dir), 1)
+        try Data().write(to: dir.appendingPathComponent("other.mid"))
+        XCTAssertEqual(ComposeSupport.nonHiddenEntryCount(in: dir), 2)
+        XCTAssertEqual(ComposeSupport.nonHiddenEntryCount(in: dir.appendingPathComponent("missing")), 0)
+    }
+
+    func testPluginSlotRequestParse() {
+        XCTAssertEqual(PluginSlotRequest.parse(nil), .newEffect)
+        XCTAssertEqual(PluginSlotRequest.parse(""), .newEffect)
+        XCTAssertEqual(PluginSlotRequest.parse("new"), .newEffect)
+        XCTAssertEqual(PluginSlotRequest.parse("Add"), .newEffect)
+        XCTAssertEqual(PluginSlotRequest.parse("append"), .newEffect)
+        XCTAssertEqual(PluginSlotRequest.parse("0"), .instrument)
+        XCTAssertEqual(PluginSlotRequest.parse("Instrument"), .instrument)
+        XCTAssertEqual(PluginSlotRequest.parse("1"), .effect(1))
+        XCTAssertEqual(PluginSlotRequest.parse("3"), .effect(3))
+        XCTAssertNil(PluginSlotRequest.parse("-1"))
+        XCTAssertNil(PluginSlotRequest.parse("bogus"))
+    }
+
+    func testStripModelChainText() {
+        var model = StripModel(
+            trackName: "Stab", volumeRaw: 173, volumeText: "0,0 dB", peakText: nil, peakValue: nil, clipping: false,
+            pan: 0, instrument: StripPlugin(name: "Diva", bypassed: false, y: 100),
+            effects: [StripPlugin(name: "Tape Delay", bypassed: false, y: 140),
+                      StripPlugin(name: "Compressor", bypassed: true, y: 160)],
+            hasMidiPluginButton: true, hasEmptyInstrumentSlot: false, hasEmptyEffectSlot: true, master: nil)
+        XCTAssertEqual(model.chainText, "Diva | Tape Delay, Compressor")
+        XCTAssertEqual(model.plugins.count, 3)
+        model.effects = []
+        XCTAssertEqual(model.chainText, "Diva | -")
+        XCTAssertTrue(model.compactJSON().contains("\"track_name\":\"Stab\""))
+    }
 }

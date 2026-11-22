@@ -72,10 +72,16 @@ actor AccessibilityChannel: Channel {
             return getMixerState()
         case "mixer.get_channel_strip":
             return getChannelStrip(params: params)
+        case "mixer.strip":
+            return await stripReport(params: params)
 
         // MARK: - Mixer mutations
         case "mixer.set_volume":
             return setMixerValue(params: params, target: .volume)
+        case "mixer.set_volume_db":
+            return await setFaderDb(params: params, master: false)
+        case "mixer.set_master_volume_db":
+            return await setFaderDb(params: params, master: true)
         case "mixer.set_pan":
             return setMixerValue(params: params, target: .pan)
         case "mixer.set_send":
@@ -130,7 +136,9 @@ actor AccessibilityChannel: Channel {
         // MARK: - Plugins
         case "plugin.insert":
             return await insertPlugin(params: params)
-        case "plugin.list", "plugin.bypass", "plugin.remove":
+        case "plugin.bypass":
+            return await bypassPlugin(params: params)
+        case "plugin.list", "plugin.remove":
             return .error("Plugin operations not yet implemented via AX")
 
         // MARK: - Automation

@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -126,6 +127,27 @@ enum FilePanelAutomation {
         _ = postKey(53, flags: [], pid: pid)
     }
 
+    // MARK: - Pasteboard
+
+    /// Current string on the general pasteboard, nil when there is none.
+    static func pasteboardString() -> String? {
+        NSPasteboard.general.string(forType: .string)
+    }
+
+    /// Replace the general pasteboard contents with `text`.
+    static func setPasteboardString(_ text: String) {
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setString(text, forType: .string)
+    }
+
+    /// Put `saved` back on the general pasteboard, or clear it when there was no string.
+    static func restorePasteboardString(_ saved: String?) {
+        let board = NSPasteboard.general
+        board.clearContents()
+        if let saved { board.setString(saved, forType: .string) }
+    }
+
     // MARK: - Panels
 
     /// Poll (every 100 ms) until an open / save panel shows up.
@@ -180,7 +202,7 @@ enum FilePanelAutomation {
 
     /// With a panel showing: Cmd+Shift+G, then (only once the Go to text field is confirmed
     /// through AX) make the field hold exactly `path` (keeping a matching prefill, else Cmd+A and
-    /// type, up to 3 attempts, read back through AX), then Return. Never types blind and never
+    /// paste from the pasteboard, else Cmd+A and type, up to 2 attempts, each read back through AX), then Return. Never types blind and never
     /// presses Return unless the field holds the wanted path. `path` may be a folder or a
     /// file. When the field does not show up, Escape is pressed once and an error is returned
     /// without having typed anything; the caller should cancel the panel if it is still up.
@@ -226,8 +248,30 @@ enum FilePanelAutomation {
         if entered {
             notes.append("prefill already matches; not typing")
         }
+        // First choice: the pasteboard (Cmd+A, Cmd+V). Typing into the sheet proved unreliable.
+        if !entered {
+            guard await ensureFrontmost() else { return fail("Could not bring Logic Pro to the front") }
+            if !AXLogicProElements.focusedIsNonSearchTextField() {
+                notes.append("paste skipped: focus is not the go-to field (focus: \(AXLogicProElements.focusedFieldSummary() ?? "none"))")
+            } else {
+                let saved = pasteboardString()
+                setPasteboardString(path)
+                _ = postKeyGlobal(0, flags: .maskCommand) // select the pre-filled path
+                guard await pause(ms: 150) else { restorePasteboardString(saved); return fail("Cancelled") }
+                _ = postKeyGlobal(9, flags: .maskCommand) // paste
+                guard await pause(ms: 500) else { restorePasteboardString(saved); return fail("Cancelled") }
+                let pasted = AXLogicProElements.focusedFieldValue() ?? ""
+                restorePasteboardString(saved)
+                entered = ComposeSupport.pathsEqual(pasted, path)
+                notes.append("paste: field has \(pasted.count) chars, matches=\(entered), value='\(String(pasted.prefix(70)))'")
+                if !entered {
+                    notes.append("paste failed; focus after: \(AXLogicProElements.focusedFieldSummary() ?? "none")")
+                }
+            }
+        }
+        // Fallback: typed attempts (read back after each one).
         var attempt = 0
-        while !entered && attempt < 3 {
+        while !entered && attempt < 2 {
             attempt += 1
             guard await ensureFrontmost() else { return fail("Could not bring Logic Pro to the front") }
             if !AXLogicProElements.focusedIsNonSearchTextField() {
@@ -241,13 +285,16 @@ enum FilePanelAutomation {
                 entered = ComposeSupport.pathsEqual(typed, path)
                 notes.append("attempt \(attempt): field has \(typed.count) chars, matches=\(entered), value='\(String(typed.prefix(70)))'")
             }
-            if !entered && attempt < 3 {
-                guard await pause(ms: 500) else { return fail("Cancelled") }
+            if !entered {
+                notes.append("attempt \(attempt) failed; focus after: \(AXLogicProElements.focusedFieldSummary() ?? "none")")
+                if attempt < 2 {
+                    guard await pause(ms: 500) else { return fail("Cancelled") }
+                }
             }
         }
         guard entered else {
             await pressEscape()
-            return fail("Could not enter the path in the Go to folder field after 3 attempts; Return was not pressed")
+            return fail("Could not enter the path in the Go to folder field (paste, then 2 typed attempts); Return was not pressed")
         }
         let summaryAtReturn = AXLogicProElements.focusedFieldSummary()
 
