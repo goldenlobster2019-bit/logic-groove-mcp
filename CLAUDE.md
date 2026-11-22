@@ -93,6 +93,13 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 - Ultrabeat init kit mapping (NOT GM): C1 sine, C#1 kick, D1 snare, D#1 hat 1, E1 hat 2, F1 tom, F#1 claps, G1 perc, G#1 shaker, A1 bass, A#1 sample; voice 25 is a chromatic bass from C3 up. Drum clips for it must use these notes, not the GM drum names.
 - Every import lands on a new track with the default instrument, so the instrument has to be set after each import (or the region moved to an existing track). `transport.set_cycle_range` is not implemented.
 
+- BUG to fix: `importMIDIFile` refuses with "A file panel is already open (window '<plug-in window title>' ...)" whenever any plug-in window is open, because the pre-check uses `filePanel()` (any AXDialog). It must use the stricter `importPanel()` / `looksLikeFilePanel`, or close plug-in windows first.
+- Audio FX slot: clicking the first empty slot under the last effect opens the same searchable menu; "Tape Delay" + Down + Right + Return inserts it (Stereo). Tape Delay defaults are already dub friendly (tempo sync, feedback 61 %, low cut 520 Hz, high cut 1500 Hz, dry 90 / wet 30); the Note pop-up is a normal menu (Up/Down + Return): "1/8 dotted" was set on the stab track.
+- Menu items that work without any clicking and should be used by the server: Edit > Select > All, then Navigate > Set Rounded Locators by Selection and Enable Cycle (sets the cycle to the regions). Navigate items are disabled until something is selected.
+- Putting an imported region on an existing instrument track currently needs a mouse drag from the new track to the target track (same x keeps the bar; with Drag: No Overlap it replaces the region underneath). A server-side way is needed (for example select the target track and paste at the playhead).
+- A hovered insert slot shows a power button at its left end: clicking it bypasses the plug-in (used to switch off the patch reverb on the sub track).
+- Session result: 8-bar loop in F minor (Fm9 x4, Dbmaj9 x2, Cm9 x2) on tracks 2-5 of the user's "Untitled" project: Diva stab + Tape Delay, Diva sub, Ultrabeat drums, Diva pad. The Stereo Out peaked at +3.8 dB, so levels need to come down.
+
 ## Known issues and unverified assumptions
 
 - Live test 2026-11-22 (Logic Pro 11): File > Import > MIDI File... opens a window (AXWindow, subrole AXDialog, title "Import", buttons Cancel and Import) whose content is hosted out of process; it opens in the last used folder and Import is disabled until a file is selected. The old flow (Cmd+Shift+G, Cmd+A, type, Return) closed the panel without importing anything while reporting `unverified`. Import now returns a trace and is `.error` unless the track count or the Edit menu Undo title changed.
