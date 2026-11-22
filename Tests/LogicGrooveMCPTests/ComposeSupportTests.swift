@@ -12,6 +12,23 @@ final class ComposeSupportTests: XCTestCase {
         XCTAssertLessThanOrEqual(ComposeSupport.sanitizeFileName(String(repeating: "a", count: 200)).count, 60)
     }
 
+    func testPathsEqual() {
+        let home = NSHomeDirectory()
+        XCTAssertTrue(ComposeSupport.pathsEqual("/a/b/clip.mid", "/a/b/clip.mid"))
+        XCTAssertTrue(ComposeSupport.pathsEqual("  /a/b/clip.mid\n", "/a/b/clip.mid"))
+        XCTAssertTrue(ComposeSupport.pathsEqual("~/Music/x.mid", home + "/Music/x.mid"))
+        XCTAssertTrue(ComposeSupport.pathsEqual("/a/b/../b//clip.mid", "/a/b/clip.mid"))
+        XCTAssertFalse(ComposeSupport.pathsEqual("/a/b/clip.mid", "/a/b/clip2.mid"))
+        XCTAssertFalse(ComposeSupport.pathsEqual("", ""))
+        XCTAssertFalse(ComposeSupport.pathsEqual("/a", ""))
+    }
+
+    func testImportStagingURL() {
+        let url = ComposeSupport.importStagingURL()
+        XCTAssertEqual(url.lastPathComponent, "clip.mid")
+        XCTAssertTrue(url.path.hasSuffix("Music/LogicGrooveMCP/Import/clip.mid"))
+    }
+
     func testPositionStrings() {
         XCTAssertEqual(ComposeSupport.positionString(tick: 0), "1.1.1")
         XCTAssertEqual(ComposeSupport.positionString(tick: 240), "1.1.3")

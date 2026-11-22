@@ -14,7 +14,7 @@ description: Use when producing house, deep house or dub techno in Logic Pro thr
 5. **Generate or write**: `generate` for a quick starting point, `complement` for a part that must fit the selected region (bass avoids stab onsets; chords follow the detected chord). Choose a style from `logic_compose("styles", {genre, part})`. When the user describes a specific sound, rhythm or progression, use `write` instead (see "Writing parts from a description").
 6. **Place**: use `at_bar` (default 1) and `loop: true` for repeating clips; or `import: false` and `import_midi` later.
 7. **Sound**: create a track first with `logic_tracks("create_instrument")` if needed, then `logic_mixer("insert_plugin", {track, slot: "instrument", name})`. Effects use slot 1+.
-8. **Verify** every mutation: read `undo_label` in the result or call `logic_edit("last_undo")`; re-read `logic_system("state")`. Results marked unverified mean the action was performed but not confirmed. An `import_midi` result is an error unless its message says "verified"; its trace shows every step.
+8. **Verify** every mutation: read `undo_label` in the result or call `logic_edit("last_undo")`; re-read `logic_system("state")`. Results marked unverified mean the action was performed but not confirmed. An `import_midi` result is an error unless its message says "verified"; its trace shows every step. Imports are staged through `~/Music/LogicGrooveMCP/Import/clip.mid` and are reported as errors unless the track count increased.
 9. Report the seed so the user can reproduce or vary the clip.
 
 Rules:

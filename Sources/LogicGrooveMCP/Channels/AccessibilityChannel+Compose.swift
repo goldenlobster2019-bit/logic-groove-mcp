@@ -23,6 +23,26 @@ extension AccessibilityChannel {
         let fileName = (path as NSString).lastPathComponent
         let barText = params["at_bar"].map { " at bar \($0)" } ?? ""
 
+        // Stage the file at a fixed path: the Go to sheet remembers the last path, so with a
+        // fixed path the pre-filled value normally already matches and nothing has to be typed.
+        let staging = ComposeSupport.importStagingURL()
+        let stagedPath = staging.path
+        let stagedName = staging.lastPathComponent
+        var didStage = false
+        if !ComposeSupport.pathsEqual(path, stagedPath) {
+            do {
+                try FileManager.default.createDirectory(
+                    at: staging.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if FileManager.default.fileExists(atPath: stagedPath) {
+                    try FileManager.default.removeItem(atPath: stagedPath)
+                }
+                try FileManager.default.copyItem(atPath: path, toPath: stagedPath)
+                didStage = true
+            } catch {
+                return .error("Could not stage \(fileName) at \(stagedPath): \(error.localizedDescription). Nothing was done.")
+            }
+        }
+
         let tracksBefore = AXLogicProElements.trackHeaderCount()
         let undoBefore = AXLogicProElements.undoMenuTitle()
         if let existing = AXLogicProElements.filePanelSummary() {
@@ -33,6 +53,7 @@ extension AccessibilityChannel {
         }
 
         var trace: [String] = []
+        if didStage { trace.append("staged as \(stagedPath)") }
         func traceText() -> String { trace.joined(separator: "; ") }
         func finish(_ message: String, isError: Bool) -> ChannelResult {
             Log.info("midi.import_file: \(message)", subsystem: "ax")
@@ -63,7 +84,7 @@ extension AccessibilityChannel {
 
         // Strategy A: select the file through Accessibility, then press Import.
         var pressed = false
-        let selection = AXLogicProElements.selectFileInPanel(named: fileName)
+        let selection = AXLogicProElements.selectFileInPanel(named: stagedName)
         trace.append("A \(selection)")
         guard await FilePanelAutomation.pause(ms: 400) else { return bail("cancelled") }
         var buttonState = AXLogicProElements.panelConfirmButtonState(titles: ["Import", "Open"])
@@ -79,7 +100,7 @@ extension AccessibilityChannel {
 
         // Strategy B: Go to sheet, only when A did not get the button pressed.
         if !pressed {
-            let goTo = await FilePanelAutomation.goToChecked(path: path)
+            let goTo = await FilePanelAutomation.goToChecked(path: stagedPath)
             trace.append(contentsOf: goTo.notes.map { "B \($0)" })
             if let error = goTo.error {
                 return bail(error)
@@ -90,7 +111,7 @@ extension AccessibilityChannel {
                 buttonState = AXLogicProElements.panelConfirmButtonState(titles: ["Import", "Open"])
                 trace.append("B button \(buttonState)")
                 if !buttonState.hasPrefix("enabled:") {
-                    let again = AXLogicProElements.selectFileInPanel(named: fileName)
+                    let again = AXLogicProElements.selectFileInPanel(named: stagedName)
                     trace.append("B \(again)")
                     guard await FilePanelAutomation.pause(ms: 400) else { return bail("cancelled") }
                     buttonState = AXLogicProElements.panelConfirmButtonState(titles: ["Import", "Open"])
@@ -110,11 +131,12 @@ extension AccessibilityChannel {
             trace.append(tempoNote)
         }
 
-        // Verify: more track headers, or a changed Undo title.
+        // Verify by track count only. The Undo title is read for the message but is not a
+        // reliable signal (it flips between "Can't Undo" and "Undo" without any import).
         var tracksAfter = AXLogicProElements.trackHeaderCount()
         var undoAfter = AXLogicProElements.undoMenuTitle()
         var waited = 0
-        while tracksAfter <= tracksBefore && undoAfter == undoBefore && waited < 6_000 {
+        while tracksAfter <= tracksBefore && waited < 6_000 {
             guard await FilePanelAutomation.pause(ms: 300) else { break }
             waited += 300
             tracksAfter = AXLogicProElements.trackHeaderCount()
@@ -125,7 +147,7 @@ extension AccessibilityChannel {
         }
         let undoOld = undoBefore ?? "none"
         let undoNew = undoAfter ?? "none"
-        let verified = tracksAfter > tracksBefore || undoAfter != undoBefore
+        let verified = tracksAfter > tracksBefore
         if verified {
             return finish(
                 "Imported \(fileName)\(barText) (verified: tracks \(tracksBefore) -> \(tracksAfter), undo '\(undoOld)' -> '\(undoNew)'). Trace: \(traceText())",

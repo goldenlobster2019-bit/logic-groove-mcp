@@ -65,6 +65,26 @@ enum ComposeSupport {
         return home.appendingPathComponent("Music/LogicGrooveMCP/Generated", isDirectory: true)
     }
 
+    /// Fixed staging file for imports: ~/Music/LogicGrooveMCP/Import/clip.mid (not created here).
+    /// The Go to sheet remembers the last path, so a fixed path normally already matches.
+    static func importStagingURL() -> URL {
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        return home.appendingPathComponent("Music/LogicGrooveMCP/Import/clip.mid", isDirectory: false)
+    }
+
+    /// True when two paths are the same after trimming whitespace, expanding a leading "~"
+    /// and standardizing ("." / ".." / duplicate slashes). Empty strings never match.
+    static func pathsEqual(_ a: String, _ b: String) -> Bool {
+        func normalize(_ raw: String) -> String? {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let expanded = (trimmed as NSString).expandingTildeInPath
+            return URL(fileURLWithPath: expanded).standardizedFileURL.path
+        }
+        guard let left = normalize(a), let right = normalize(b) else { return false }
+        return left == right
+    }
+
     /// Directory for MIDI exported from Logic regions (not created here).
     static func exportsDirectory() -> URL {
         let home = URL(fileURLWithPath: NSHomeDirectory())

@@ -59,6 +59,7 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 7. Branch `free-notes` (0.3.0): `logic_compose write` (ClipWriter in MusicCore, `writeResult` in ComposeDispatcher, SystemDispatcher help, README section, SKILL recipes, ClipWriterTests and DocRecipeTests). Server-side code was written without a macOS compile: read CI first.
 
 8. Version 0.3.1 (import fix): `midi.import_file` rewritten (never types blind; Accessibility selection first, Go to sheet only with a confirmed text field; verified by track count and Undo title; returns a step trace); `FilePanelAutomation.goToChecked`; `AXLogicProElements.importPanel`, `selectFileInPanel`, `panelConfirmButtonState`, focus and subtree-dump helpers; Go To Position confirms the dialog before typing; `logic_system` gained `state`, `debug_panel`, `debug_focus`; installer accepts a self-signed "Logic Groove Signing" identity. Written without a macOS compile: read CI first.
+9. Import staging path and checked typing (still 0.3.1): `importMIDIFile` copies the file to `~/Music/LogicGrooveMCP/Import/clip.mid` and imports that copy; `goToChecked` keeps a matching prefill or types in up to 3 read-back-checked attempts and never presses Return unless the field holds the wanted path (`ComposeSupport.pathsEqual`, `importStagingURL`); verification by track count only. Written without a macOS compile: read CI first.
 
 ## Verified on a real Mac (Logic Pro 11, 2026-10-18)
 
@@ -72,7 +73,7 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 ## Known issues and unverified assumptions
 
 - Live test 2026-11-22 (Logic Pro 11): File > Import > MIDI File... opens a window (AXWindow, subrole AXDialog, title "Import", buttons Cancel and Import) whose content is hosted out of process; it opens in the last used folder and Import is disabled until a file is selected. The old flow (Cmd+Shift+G, Cmd+A, type, Return) closed the panel without importing anything while reporting `unverified`. Import now returns a trace and is `.error` unless the track count or the Edit menu Undo title changed.
-- Unverified: whether `selectFileInPanel` can select a file through AX (the file list is a column view in another process); whether `undoMenuTitle()` sees the real title (it returned "Undo" while Logic showed "Can't Undo": AX menu titles may only refresh when the menu opens); the Go To Position window title "Go To Position".
+- Live runs 2026-11-22 (0.3.1 flow): the Go to typing landed once and failed twice (field had 0 chars) when the field was pre-filled with the previous path; the Go to sheet remembers the last path system-wide. Return on an empty or mismatched field closes the whole panel without importing. File rows are not exposed through AX in column view (`AXBrowser` > empty `AXScrollArea`s), so `selectFileInPanel` cannot work there. The Edit menu Undo title flips between "Can't Undo" and "Undo" without any import and is not usable as a signal. The Go To Position dialog check works. Logic creates a new track named after the default patch for every imported MIDI file and asks a tempo question that is answered "No".
 
 - Menu titles are matched in English (Logic Pro 11); other languages or versions untested.
 - File panels in a sandboxed Logic (Cmd+Shift+G go-to-folder, save name field, replace alert) are unverified.
@@ -86,6 +87,8 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 
 ## Decisions
 
+- Imports go through a fixed staging file (~/Music/LogicGrooveMCP/Import/clip.mid) so the Go to sheet's remembered path normally already matches and nothing has to be typed.
+- An import is verified only by a higher track count.
 - Never type into a panel or dialog unless the target text field is confirmed through AX; cancel and return an error with a trace instead.
 - State is exposed through `logic_system state` because MCP resources are not reachable from every client.
 

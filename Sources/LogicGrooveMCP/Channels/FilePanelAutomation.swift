@@ -82,7 +82,7 @@ enum FilePanelAutomation {
             keyDown.post(tap: .cghidEventTap)
             keyUp.post(tap: .cghidEventTap)
             index = end
-            guard await pause(ms: 20) else { return false }
+            guard await pause(ms: 40) else { return false }
         }
         return true
     }
@@ -164,7 +164,9 @@ enum FilePanelAutomation {
     }
 
     /// With a panel showing: Cmd+Shift+G, then (only once the Go to text field is confirmed
-    /// through AX) Cmd+A, type `path`, Return. Never types blind. `path` may be a folder or a
+    /// through AX) make the field hold exactly `path` (keeping a matching prefill, else Cmd+A and
+    /// type, up to 3 attempts, read back through AX), then Return. Never types blind and never
+    /// presses Return unless the field holds the wanted path. `path` may be a folder or a
     /// file. When the field does not show up, Escape is pressed once and an error is returned
     /// without having typed anything; the caller should cancel the panel if it is still up.
     static func goToChecked(path: String) async -> GoToOutcome {
@@ -202,21 +204,36 @@ enum FilePanelAutomation {
         }
         notes.append("go-to field: \(fieldSummary)")
 
-        guard await pause(ms: 150) else { return fail("Cancelled") }
-        guard await ensureFrontmost() else { return fail("Could not bring Logic Pro to the front") }
-        // Re-check right before typing: the focus must still be the confirmed field.
-        guard AXLogicProElements.focusedIsNonSearchTextField() else {
-            notes.append("focus left the go-to field before typing")
-            await pressEscape()
-            return fail("Focus left the Go to folder field before typing; nothing was typed")
+        // Let the sheet settle, then see what the field already holds (it remembers the last path).
+        guard await pause(ms: 400) else { return fail("Cancelled") }
+        let prefill = AXLogicProElements.focusedFieldValue() ?? ""
+        var entered = ComposeSupport.pathsEqual(prefill, path)
+        if entered {
+            notes.append("prefill already matches; not typing")
         }
-        _ = postKeyGlobal(0, flags: .maskCommand) // select the pre-filled path
-        guard await pause(ms: 80) else { return fail("Cancelled") }
-        guard await typeTextGlobal(path) else { return fail("Failed to type the path") }
-        guard await pause(ms: 500) else { return fail("Cancelled") } // let the suggestion list update
-        let typed = AXLogicProElements.focusedFieldValue() ?? ""
-        let matches = typed == path
-        notes.append("typed \(path.count) chars, field now has \(typed.count) chars, matches=\(matches)")
+        var attempt = 0
+        while !entered && attempt < 3 {
+            attempt += 1
+            guard await ensureFrontmost() else { return fail("Could not bring Logic Pro to the front") }
+            if !AXLogicProElements.focusedIsNonSearchTextField() {
+                notes.append("attempt \(attempt): focus is not the go-to field; not typing")
+            } else {
+                _ = postKeyGlobal(0, flags: .maskCommand) // select the pre-filled path
+                guard await pause(ms: 150) else { return fail("Cancelled") }
+                guard await typeTextGlobal(path) else { return fail("Failed to type the path") }
+                guard await pause(ms: 600) else { return fail("Cancelled") } // let the suggestion list update
+                let typed = AXLogicProElements.focusedFieldValue() ?? ""
+                entered = ComposeSupport.pathsEqual(typed, path)
+                notes.append("attempt \(attempt): field has \(typed.count) chars, matches=\(entered), value='\(String(typed.prefix(70)))'")
+            }
+            if !entered && attempt < 3 {
+                guard await pause(ms: 500) else { return fail("Cancelled") }
+            }
+        }
+        guard entered else {
+            await pressEscape()
+            return fail("Could not enter the path in the Go to folder field after 3 attempts; Return was not pressed")
+        }
         let summaryAtReturn = AXLogicProElements.focusedFieldSummary()
 
         guard await ensureFrontmost() else { return fail("Could not bring Logic Pro to the front") }

@@ -15,7 +15,7 @@ Based on [koltyj/logic-pro-mcp](https://github.com/koltyj/logic-pro-mcp) by Kolt
 - **Write your own notes** with `logic_compose("write", ...)`: give exact notes, chords (symbols such as `Fm9`, with voicings) and step patterns for drums, and get a clip written and imported exactly like a generated one. Use it whenever the fixed styles do not cover the sound you want.
 - **Analyze a selected region**: export the selected MIDI region from Logic and get key, chords, rhythm (onset grid) and pitch range back.
 - **Complement**: write a part that fits your existing stab or chords. The bass avoids your stab onsets, takes the key from the analysis, and chord parts follow the detected chord.
-- **MIDI import and export**: generated files are imported through Logic's File > Import > MIDI File menu at the bar you choose; regions are exported the same way for analysis. Existing `.mid` files can be analyzed or imported.
+- **MIDI import and export**: generated files are imported through Logic's File > Import > MIDI File menu at the bar you choose; regions are exported the same way for analysis. Existing `.mid` files can be analyzed or imported. Imports are staged through `~/Music/LogicGrooveMCP/Import/clip.mid` and are reported as errors unless the track count increased.
 - **Plugin loading**: insert instruments and effects into the instrument or FX slots of a track by name.
 - **Everything else the original server does**: transport, tracks, mixer, raw MIDI/MMC, editing, navigation, project lifecycle and system diagnostics, plus 7 read-only resources.
 
