@@ -71,6 +71,16 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 - Fixed: filePanel()/attentionContainers() skipped the main window, so the panel was never found. Use projectWindow() (title contains ".logicx") for project-window lookups.
 - AXPress on a region (AXLayoutItem) does NOT select it; a real click does. Region selection is still manual or via screen click.
 
+## Verified on a real Mac (Logic Pro 11, 2026-11-22, commit 350c4a3)
+
+- `logic_compose write` and `import_midi` work end to end: four imports in a row succeeded (stab, sub, step-pattern drums, pad), each verified by the track count, regions landed at the requested bar (1 and 5) with the clip name as region name.
+- First import after another app used the Go to sheet: the path was typed once and read back correctly ("attempt 1: matches=true"). Every later import: "prefill already matches; not typing".
+- Each import creates a NEW software instrument track with the default patch (shown as "Studio Grand"); the track is not named after the clip. Sound assignment is still missing (next step).
+- `logic_system state` works; right after the server starts the live track header count and the cache can read 0 until the first poll: call `refresh_cache` (or `state` twice) before trusting counts.
+- `transport.goto_position` through the checked Go To Position dialog works.
+- MCP resources (logic://...) are not reachable through the Claude desktop device bridge; tools only.
+- The installed binary lost Accessibility after every unsigned rebuild; the user re-adds it by hand. `Install.command` was used for the last install.
+
 ## Known issues and unverified assumptions
 
 - Live test 2026-11-22 (Logic Pro 11): File > Import > MIDI File... opens a window (AXWindow, subrole AXDialog, title "Import", buttons Cancel and Import) whose content is hosted out of process; it opens in the last used folder and Import is disabled until a file is selected. The old flow (Cmd+Shift+G, Cmd+A, type, Return) closed the panel without importing anything while reporting `unverified`. Import now returns a trace and is `.error` unless the track count or the Edit menu Undo title changed.
