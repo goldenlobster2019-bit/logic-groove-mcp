@@ -21,10 +21,10 @@ MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write elec
   - `Server/` - `LogicProServer.swift` (tool/resource registration, class name kept from upstream), `ServerConfig.swift` (name, ports, timeouts, MIDI port names).
   - `Dispatchers/` - one file per MCP tool (transport, tracks, mixer, midi, edit, navigate, project, compose, system).
   - `Channels/` - `Channel.swift` (protocol, ChannelID, ChannelResult), `ChannelRouter.swift` (routing table), CoreMIDI, Accessibility (+Compose: import/export, verified track selection, plug-in insert; +Placement: region move to an existing track, cycle to regions), CGEvent, AppleScript, OSC channels, `FilePanelAutomation.swift` (open/save panel driving).
-  - `Accessibility/` - AX wrappers; `AXLogicProElements+Compose.swift` holds menu/panel/inspector/plugin finders; `AXLogicProElements+Tracks.swift` holds selection read-back, focus, window-set, plug-in slot press and strip diagnostics.
+  - `Accessibility/` - AX wrappers; `AXLogicProElements+Compose.swift` holds menu/panel/inspector/plugin finders; `AXLogicProElements+Tracks.swift` holds selection read-back, focus, window-set and strip diagnostics; `AXLogicProElements+Strip.swift` holds the structural strip reader (model, slot press, bypass, faders); `AXLogicProElements+ImportPanel.swift` holds the "Where:" / browser readers; `Channels/AccessibilityChannel+Strip.swift` holds strip, bypass and dB volume commands.
   - `MIDI/`, `OSC/` - CoreMIDI engine and MMC, UDP OSC client/server.
   - `State/` - cache, models, adaptive poller. `Resources/` - 7 MCP resources.
-  - `Utilities/` - `ComposeSupport.swift` (folders, file names, positions, path validation), input validation, logging, permissions, process utils.
+  - `Utilities/` - `StripModel.swift` (Sendable strip model, slot request parsing), `ComposeSupport.swift` (folders, file names, positions, path validation), input validation, logging, permissions, process utils.
 - `Tests/MusicCoreTests/` - generator, analyzer, MIDI IO, ClipWriter (+ `ClipWriterKitCCTests.swift` for kit/program/cc) and doc-recipe tests (run everywhere). `Tests/LogicGrooveMCPTests/` - macOS only.
 - `docs/SKILL.md` - agent skill teaching the music workflow. `Scripts/install.sh`, `manifest.json`, `.github/workflows/{ci,release}.yml`.
 
@@ -62,7 +62,7 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 8. Version 0.3.1 (import fix): `midi.import_file` rewritten (never types blind; Accessibility selection first, Go to sheet only with a confirmed text field; verified by track count and Undo title; returns a step trace); `FilePanelAutomation.goToChecked`; `AXLogicProElements.importPanel`, `selectFileInPanel`, `panelConfirmButtonState`, focus and subtree-dump helpers; Go To Position confirms the dialog before typing; `logic_system` gained `state`, `debug_panel`, `debug_focus`; installer accepts a self-signed "Logic Groove Signing" identity. Written without a macOS compile: read CI first.
 9. Import staging path and checked typing (still 0.3.1): `importMIDIFile` copies the file to `~/Music/LogicGrooveMCP/Import/clip.mid` and imports that copy; `goToChecked` keeps a matching prefill or types in up to 3 read-back-checked attempts and never presses Return unless the field holds the wanted path (`ComposeSupport.pathsEqual`, `importStagingURL`); verification by track count only. Written without a macOS compile: read CI first.
 
-10. Version 0.4.0 (sounds and placement; FIRST LIVE TEST PENDING for all of Part B, nothing below has ever run against Logic, and the server code was written without a macOS compile: read CI first):
+10. Version 0.4.0 (sounds and placement; first live test 2026-11-22 evening: instrument insert and arrow-key track selection worked, see the section below; the other items here are still unrun):
     - MusicCore (tested here): `kit` ("gm" | "ultrabeat_init", `ClipWriter.drumNames(kit:)`, hat2/perc/tom added to GM), `program` (Program Change at tick 0 before the first note), `cc` lanes (linear/step, resolution, dedupe of interpolated values, exact point values always emitted, not tiled by `pattern_bars`, max 16 lanes / 20000 events), `Clip.program`, `Clip.controls`, `ControlEvent`, `MIDIFileIO` write/read of both. Specs without the new keys produce byte-identical MIDI.
     - Import pre-check bug fixed: `importMIDIFile` now refuses only when the strict `importPanel()` is up (a plug-in window no longer blocks imports). The export flow and `file_panel_open` use the new `strictFilePanel()` (import panel, window titled Save/Export/Open, or a file-panel-looking sheet) instead of the loose `filePanel()` (kept for diagnostics).
     - `AccessibilityChannel.selectTrackVerified(index:)` plus `AXLogicProElements.selectedTrackIndex()`: AXPress, AXSelected, arrow keys, last-resort mouse click, each re-read after 200 ms; ok only when the read-back equals the wanted index.
@@ -72,6 +72,12 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
     - `logic_system debug_panel` gained `window` and `max_lines`; new `debug_strip`.
     - Earlier fixed: the "plug-in window blocks import" bug (see first bullet).
 
+11. Version 0.4.1 (live-test fixes; FIRST LIVE TEST PENDING for everything below, written without a macOS compile: read CI first):
+    - Plug-in slots by structure: `AXLogicProElements.stripModel()` (`Utilities/StripModel.swift` holds the Sendable types, `Accessibility/AXLogicProElements+Strip.swift` the AX reader) reads the selected track's layout item and Stereo Out; `pressPluginList(slotKind:)` presses the `list` button of the instrument or of the n-th effect (REPLACES it) or the empty `audio plug-in` button (ADDS an effect). `insertPlugin` takes `slot` = "instrument"/0, "new"/"add"/"append" (default) or n >= 1; it verifies by the strip structure after the window check and returns `chain: <instrument> | <effects>`. Fixes the live failure where `slot: 1` replaced Channel EQ instead of adding an effect.
+    - New `logic_mixer` commands: `strip` (JSON model), `bypass_plugin` (rewritten: bypass checkbox, pressed only when the state differs, read back), `set_volume {db}` and `set_master_volume {db}` (bisection on the fader's AXValue, at most 14 steps, read back from the level text title; `ComposeSupport.parseDecibels`). Old `value` forms are unchanged. Routed as `mixer.strip`, `mixer.set_volume_db`, `mixer.set_master_volume_db`, `plugin.bypass`; implemented in `Channels/AccessibilityChannel+Strip.swift`.
+    - Import: strategy A only when the panel exposes AXRow/AXCell with string values; new strategy K (keyboard, no typing: "Where:" pop-up equals the staging folder name and the folder holds exactly one entry; AXFocused on the column browser, Right, then Down, then Import if enabled and the folder is unchanged); strategy B (Go to sheet) now pastes the path first (NSPasteboard saved and restored, Cmd+A, Cmd+V, read back), then at most 2 typed attempts; every failed attempt notes the focus afterwards. Fixes the live failure where typing left the focus outside the Go to field.
+    - Version 0.4.1.
+
 ## Verified on a real Mac (Logic Pro 11, 2026-10-18)
 
 - Server starts from the Claude desktop app; needs Accessibility for the binary (~/.local/bin/LogicGrooveMCP).
@@ -79,7 +85,7 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 - Menu "File > Export > Selection as MIDI File…" exists with that exact title.
 - The Open/Save panel is a standalone window titled "Save MIDI File as:" that becomes AXMainWindow; name field = first AXTextField (search field has subrole AXSearchField); buttons "Save"/"Cancel"; Cmd+Shift+G opens a go-to sheet that accepts "~/..." paths.
 - Fixed: filePanel()/attentionContainers() skipped the main window, so the panel was never found. Use projectWindow() (title contains ".logicx") for project-window lookups.
-- AXPress on a region (AXLayoutItem) does NOT select it; a real click does. Region selection is still manual or via screen click.
+- AXPress on a region (AXLayoutItem) does NOT select it; a real click does. Region selection is still manual or via screen click. (For TRACK headers, arrow keys select; AXPress does not reliably change the selection, see the 2026-11-22 evening section.)
 
 ## Verified on a real Mac (Logic Pro 11, 2026-11-22, commit 350c4a3)
 
@@ -90,6 +96,24 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 - `transport.goto_position` through the checked Go To Position dialog works.
 - MCP resources (logic://...) are not reachable through the Claude desktop device bridge; tools only.
 - The installed binary lost Accessibility after every unsigned rebuild; the user re-adds it by hand. `Install.command` was used for the last install.
+
+## Verified on a real Mac (Logic Pro 11, 2026-11-22 evening, 0.4.0)
+
+WORKS:
+- `logic_mixer insert_plugin {track: 5, slot: 0, name: "Diva"}` succeeded first time. Trace: `select track 5: selected now 2; AXPress ok -> selected 2; AXSelected: not settable -> selected 2; arrow Down x3 -> selected 5; ...; slot candidates=43, chosen AXButton[title=, desc=list], AXPress returned -25204; menu search field focused: AXTextField/AXSearchField value=''; typed 'Diva', field holds 'Diva'; keys: Down x1, Right, Down x0, Return; new window: 'Studio Grand' after 500 ms; closed 1 new window(s)`.
+- Track selection: arrow keys are what works. AXPress on a track header and AXSelected (not settable) do NOT change the selection.
+- The slot press returns -25204 while the menu is open (the return value is only recorded); the menu's search field is an AXSearchField and is readable; the new plug-in window is detected.
+- `logic_system debug_strip` works and shows the real structure.
+
+Inspector channel strip structure (software instrument track): `AXLayoutArea desc='Mixer'` with two `AXLayoutItem`s, the selected track (desc = track name) and `desc='Stereo Out'`. Inside the track's item the AX child order is bottom to top on screen; frames are global, y grows downward:
+- `AXTextField desc='name'`; `AXSlider desc='volume fader'` (settable AXValue, 173 = 0.0 dB); `AXTextField title="volume fader level, 0,0 dB"` (decimal comma); `AXButton title="peak level meter, -7,9 dB" value='signal clipping off'` (title is just "peak level meter" when no signal has passed; Stereo Out shows value 'mixed' when clipping); `AXSlider desc='pan'`.
+- `AXGroup desc='Read, automation enabled'` holds `AXCheckBox desc='automation'` and a `list` button: NOT a plug-in slot.
+- Plug-in = `AXGroup desc='<plug-in name>'` with children `AXCheckBox desc='bypass'` (value '1' = bypassed), `AXButton desc='open'`, `AXButton desc='list'`. Empty effect slot = `AXButton desc='audio plug-in'` (pressing it opens the same searchable menu and ADDS an effect). `AXButton desc='MIDI plug-in'` sits just above the instrument group. `AXButton desc='insert bar'` between slots.
+- On screen top to bottom: setting, EQ, MIDI plug-in, instrument, effect 1..n, empty 'audio plug-in' slot, send, Stereo Output, group, automation, pan, fader. The instrument is the plug-in group with the smallest y.
+
+FAILED:
+- `insert_plugin {slot: 1, name: "Tape Delay"}` REPLACED the existing first effect (Channel EQ) instead of adding one (fixed in 0.4.1, untested: structural slots).
+- `logic_compose import_midi` failed twice, safely (Return was not pressed): after Cmd+A and typing, the focus was no longer a non-search text field (`B attempt 1: field has 0 chars; B attempt 2: focus is not the go-to field`). Typing into the Go to sheet is unreliable and the sheet's memory is overwritten whenever the user uses a Go to sheet in any other app (fixed in 0.4.1, untested: strategy K and paste).
 
 ## Sound assignment, learned by hand on 2026-11-22 (not yet in the server)
 
@@ -119,7 +143,7 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 - Menu titles are matched in English (Logic Pro 11); other languages or versions untested.
 - File panels in a sandboxed Logic (Cmd+Shift+G go-to-folder, save name field, replace alert) are unverified.
 - Go To Position expects the format `N.1.1.1`; result is `.unverified`, so import placement at the playhead is not read back.
-- Inspector channel strip is detected as an AXLayoutArea described "Mixer"; plugin menu uses search field or AXPress through submenus. Results are unverified.
+- Inspector channel strip is an AXLayoutArea described "Mixer" (verified); its structure is in the 2026-11-22 evening section. The 0.4.1 structural reader (`stripModel`), bypass, `set_volume {db}` bisection (assumes the raw value is monotonic in dB) and the instrument rule (first plug-in group is the instrument only when a `MIDI plug-in` button exists and there is no empty `instrument plug-in` button; a loaded MIDI FX plug-in would be misread as the instrument) are unverified.
 - `waitForPanelToClose` treats the tempo sheet as a panel, so it can add up to 3 s delay.
 - `refresh_editor` matches menu titles by prefix (risk of hitting a wrong item).
 - The "replace" alert search scans all windows.
@@ -133,7 +157,10 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 - Never type into a panel or dialog unless the target text field is confirmed through AX; cancel and return an error with a trace instead.
 - State is exposed through `logic_system state` because MCP resources are not reachable from every client.
 - A synthetic mouse click is allowed in exactly one place: the last-resort track selection in `selectTrackVerified` (track number column of an AX-located header). Everything else stays AX or keyboard.
-- Plug-ins are inserted through the slot menu's search field with the keyboard (type, Down, Right, Return) and confirmed by the new plug-in window.
+- Plug-ins are inserted through the slot menu's search field with the keyboard (type, Down, Right, Return) and confirmed by the new plug-in window and by the strip structure.
+- Effect slots are addressed by structure: 'new' (default) adds in the empty slot, n replaces the n-th effect.
+- Imports first try the keyboard path in the remembered staging folder (no typing), then the Go to sheet with paste (typing only as a fallback).
+- Levels are read from the strip's peak meter titles (`logic_mixer strip`); after building a loop, bring the master peak below 0 dB with `set_volume {db}`.
 - A plug-in is never inserted unless the target track selection was read back.
 
 - Never use Space for stop/play; use keypad 0 / Enter style keys (and MMC first).

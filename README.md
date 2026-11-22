@@ -62,7 +62,7 @@ logic_edit("last_undo", {})
 | `logic_compose` | styles, generate, write, analyze_region, analyze_file, complement, import_midi, set_loop | `logic_compose("generate", {genre: "house", part: "bass"})` |
 | `logic_transport` | play, stop, record, set_tempo, goto_position, cycle_to_regions... | `logic_transport("set_tempo", {tempo: 124})` |
 | `logic_tracks` | select, create_audio, create_instrument, mute, solo, arm, rename... | `logic_tracks("mute", {index: 2, enabled: true})` |
-| `logic_mixer` | set_volume, set_pan, insert_plugin, bypass_plugin... | `logic_mixer("insert_plugin", {track: 2, slot: 0, name: "Diva"})` |
+| `logic_mixer` | strip, set_volume, set_pan, insert_plugin, bypass_plugin... | `logic_mixer("insert_plugin", {track: 2, slot: "instrument", name: "Diva"})` |
 | `logic_midi` | send_note, send_cc, send_chord, MMC | `logic_midi("send_note", {note: 60, velocity: 100, channel: 1, duration_ms: 500})` |
 | `logic_edit` | undo, redo, cut, copy, paste, quantize, split, last_undo | `logic_edit("quantize", {value: "1/16"})` |
 | `logic_navigate` | goto_bar, markers, toggle_view, refresh_editor, open_piano_roll | `logic_navigate("goto_bar", {bar: 9})` |
@@ -112,13 +112,16 @@ Deep house and house currently share the same pattern generators; they differ in
 | `cc` | `[{ cc, points: [{ pos or step, value }], curve?, resolution? }]`: controller lanes, for example a mod wheel (CC 1) sweep (0.4.0) |
 | `import`, `at_bar`, `loop`, `tempo`, `track` | As for `generate` |
 
-### Sounds and placement (0.4.0, not yet verified in a live session)
+### Sounds and placement (0.4.0 and 0.4.1; instrument insert verified live, the rest not yet)
 
 - `kit: "ultrabeat_init"` maps drum names to Ultrabeat's init kit instead of GM: `kick`/`bd` C#1 (37), `snare`/`sd` D1 (38), `closed_hat`/`ch`/`hh`/`hat` D#1 (39), `open_hat`/`oh`/`hat2` E1 (40), toms F1 (41), `clap`/`cp` F#1 (42), `rim`/`perc`/`cowbell`/`clave`/congas/`tamb` G1 (43), `shaker`/`pedal_hat` G#1 (44). `ride`, `ride_bell` and `crash` have no voice and are an error.
 - `program` writes a Program Change at the clip start; only useful once the instrument maps program changes.
 - `cc` lanes: `cc` 0 to 127 (1 = mod wheel), `points` 2 to 512 with `value` 0 to 127 (any order), `curve` `"linear"` (default, an event every `resolution` 16ths, 0.25 to 4, default 0.5) or `"step"`. Lanes cover the whole clip and are not tiled by `pattern_bars`.
 - `track` (on `write`, `generate`, `complement`, `import_midi`) puts the clip on an existing track: after the import the region is cut, the empty new track is deleted (only when its selection is read back), the target track is selected (read back), the playhead goes to `at_bar` and the region is pasted. A region already there is replaced where they overlap.
-- `logic_mixer("insert_plugin", {track, slot, name, result_index?, variant_index?})`: slot 0 is the instrument, 1+ are effects. The track is selected and read back first; if that fails nothing is changed. The plug-in is chosen with the keyboard in the slot menu's search field and confirmed by the new plug-in window.
+- `logic_mixer("insert_plugin", {track, slot?, name, result_index?, variant_index?})`: `slot` is `"instrument"` / 0 for the instrument, `"new"` / `"add"` / `"append"` (default) to add an effect in the empty slot, or n >= 1 to replace the n-th existing effect (top to bottom). The track is selected and read back first; if that fails nothing is changed. The plug-in is chosen with the keyboard in the slot menu's search field and confirmed by the new plug-in window and by the channel strip structure; the message ends with `chain: <instrument> | <effects>`.
+- `logic_mixer("strip", {track?})`: JSON of the channel strip read through Accessibility (instrument and effects with bypass state, volume text, peak text, clipping, Stereo Out volume and peak). Call it after building a loop and bring levels down when the master peak is above 0 dB.
+- `logic_mixer("bypass_plugin", {track?, plugin? | slot?, bypassed})`: presses the bypass checkbox only when the state differs, read back. `slot` 0 is the instrument, n the n-th effect.
+- `logic_mixer("set_volume", {track?, db})` and `logic_mixer("set_master_volume", {db})`: the fader is searched until the read-back level is within 0.15 dB (success within 0.3 dB). The old `value` 0.0-1.0 form still works.
 - `logic_transport("cycle_to_regions")` selects all regions and sets and enables the cycle over them.
 - `logic_system("debug_panel", {window, max_lines})` and `logic_system("debug_strip")` dump AX trees for diagnosing slot and window problems.
 
@@ -471,13 +474,13 @@ Needs testing on more Macs and Logic versions:
 - **Menu titles** are matched by English text (Logic Pro 11); other languages or versions may not match.
 - **File panels in a sandboxed Logic**: import and export drive the open/save panel with Cmd+Shift+G and path entry; behavior may differ with sandboxed file access.
 - **Import placement at the playhead**: the playhead is moved with Go To Position (`N.1.1.1`) before import; the result is reported as unverified because the outcome is not read back. Check the region landed at the intended bar.
-- **Plugin slot detection**: slots are found in the Inspector channel strip through the Accessibility tree and the plugin is picked from the slot menu (search field or submenu walk). Results are reported as unverified; confirm the plugin loaded.
+- **Plugin slots**: slots are found by structure in the Inspector channel strip (plug-in groups with bypass, list and open buttons; the empty `audio plug-in` button adds an effect). Inserting an instrument was verified live; the structural effect handling, `strip`, `bypass_plugin` and `set_volume {db}` (0.4.1) still need a live run.
 - **Tempo sheet**: the panel-close wait can treat a tempo sheet as an open panel, adding up to 3 seconds of delay.
 - **Editor refresh and replace alert**: `refresh_editor` matches menu titles by prefix, and the "replace" alert search scans all windows.
 - Piano Roll can stay on an old region; use `logic_navigate("refresh_editor")` or reopen the project.
 - Logic exposes no programmatic API: UI paths change between versions, AX labels are localized, and OSC needs a manual Control Surface setup.
 
-The server never clicks at screen coordinates, with one exception added in 0.4.0: when a track cannot be selected through Accessibility or arrow keys, `selectTrackVerified` clicks the track number column of an AX-located track header as a last resort. The 0.4.0 features (verified track selection, keyboard plug-in insert, `track` placement, `cycle_to_regions`, `kit`, `program`, `cc`) have not run against Logic yet; every UI step returns a trace to read.
+The server never clicks at screen coordinates, with one exception added in 0.4.0: when a track cannot be selected through Accessibility or arrow keys, `selectTrackVerified` clicks the track number column of an AX-located track header as a last resort. The 0.4.0 features `track` placement, `cycle_to_regions`, `kit`, `program` and `cc`, and the 0.4.1 features (structural plug-in slots, `strip`, `bypass_plugin`, `set_volume {db}`, keyboard and paste import) have not run against Logic yet; every UI step returns a trace to read.
 
 ## Architecture
 
