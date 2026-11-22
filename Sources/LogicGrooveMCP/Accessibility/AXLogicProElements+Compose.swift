@@ -185,7 +185,7 @@ extension AXLogicProElements {
     /// Press the panel's default button (or a button whose title matches one of
     /// `titles`, case-insensitive). Returns the pressed title, or nil when nothing was pressed.
     static func pressPanelButton(titles: [String]) -> String? {
-        guard let panel = filePanel() else { return nil }
+        guard let panel = strictFilePanel() else { return nil }
         let wanted = titles.map { $0.lowercased() }
         let buttons = AXHelpers.findAllDescendants(of: panel, role: kAXButtonRole, maxDepth: 10)
         for button in buttons {
@@ -262,7 +262,7 @@ extension AXLogicProElements {
 
     // MARK: - Text fields in panels
 
-    private static func isTextRole(_ role: String?) -> Bool {
+    static func isTextRole(_ role: String?) -> Bool {
         role == kAXTextFieldRole || role == kAXComboBoxRole || role == kAXTextAreaRole
     }
 
@@ -312,7 +312,7 @@ extension AXLogicProElements {
 
     /// The file name field of a save panel.
     static func saveNameField() -> AXUIElement? {
-        guard let panel = filePanel() else { return nil }
+        guard let panel = strictFilePanel() else { return nil }
         if let field = AXHelpers.findDescendant(
             of: panel, role: kAXTextFieldRole, identifier: "saveAsNameTextField", maxDepth: 10
         ) {
@@ -641,15 +641,39 @@ extension AXLogicProElements {
         return false
     }
 
-    /// Title and button titles of the file panel, for error messages. nil without a panel.
-    static func filePanelSummary() -> String? {
-        guard let panel = filePanel() else { return nil }
+    /// Like filePanel() but never returns a plug-in window or an unrelated dialog: the import
+    /// panel, a window titled Save / Export / Open, or a sheet that looks like a file panel.
+    /// Used by the export flow and by every pre-check that asks "is a file panel up?".
+    static func strictFilePanel() -> AXUIElement? {
+        if let panel = importPanel() { return panel }
+        for window in dialogCandidates() {
+            let title = (AXHelpers.getTitle(window) ?? "").lowercased()
+            if title.contains(".logicx") { continue }
+            if title.hasPrefix("save") || title.hasPrefix("export") || title.hasPrefix("open") {
+                return window
+            }
+            for sheet in AXHelpers.findAllDescendants(of: window, role: kAXSheetRole, maxDepth: 6)
+            where looksLikeFilePanel(sheet) {
+                return sheet
+            }
+        }
+        return nil
+    }
+
+    /// Title and button titles of a panel, for error messages.
+    static func panelSummary(of panel: AXUIElement) -> String {
         let title = AXHelpers.getTitle(panel) ?? "(no title)"
         let buttons = buttonTitles(in: panel)
         return "window '\(title)' with buttons [\(buttons.joined(separator: ", "))]"
     }
 
-    private static func isSettable(_ element: AXUIElement, _ attribute: String) -> Bool {
+    /// Title and button titles of the file panel, for error messages. nil without a panel.
+    static func filePanelSummary() -> String? {
+        guard let panel = strictFilePanel() else { return nil }
+        return panelSummary(of: panel)
+    }
+
+    static func isSettable(_ element: AXUIElement, _ attribute: String) -> Bool {
         var settable = DarwinBoolean(false)
         let result = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
         return result == .success && settable.boolValue
@@ -758,7 +782,7 @@ extension AXLogicProElements {
     /// Press Cancel on the import panel (or, when there is none, on the file panel).
     /// Returns true when a Cancel button was pressed.
     static func cancelFilePanel() -> Bool {
-        guard let panel = importPanel() ?? filePanel() else { return false }
+        guard let panel = strictFilePanel() else { return false }
         for button in AXHelpers.findAllDescendants(of: panel, role: kAXButtonRole, maxDepth: 12) {
             if (AXHelpers.getTitle(button) ?? "").lowercased() == "cancel" && isEnabled(button) {
                 if AXHelpers.performAction(button, kAXPressAction) { return true }
@@ -782,7 +806,7 @@ extension AXLogicProElements {
         text.count > limit ? String(text.prefix(limit)) + "..." : text
     }
 
-    private static func stringValue(of element: AXUIElement) -> String? {
+    static func stringValue(of element: AXUIElement) -> String? {
         guard let value = AXHelpers.getValue(element) else { return nil }
         if let text = value as? String { return text }
         if let number = value as? NSNumber { return number.stringValue }
@@ -824,7 +848,7 @@ extension AXLogicProElements {
 
     // MARK: Subtree dump
 
-    private static func dumpLine(of element: AXUIElement, depth: Int) -> String {
+    static func dumpLine(of element: AXUIElement, depth: Int) -> String {
         let role = AXHelpers.getRole(element) ?? "?"
         let subrole: String? = AXHelpers.getAttribute(element, kAXSubroleAttribute)
         let title = AXHelpers.getTitle(element) ?? ""
@@ -849,7 +873,7 @@ extension AXLogicProElements {
         return line
     }
 
-    private static func dump(_ element: AXUIElement, depth: Int, maxDepth: Int, maxLines: Int, into lines: inout [String]) {
+    static func dump(_ element: AXUIElement, depth: Int, maxDepth: Int, maxLines: Int, into lines: inout [String]) {
         guard lines.count < maxLines else { return }
         lines.append(dumpLine(of: element, depth: depth))
         guard depth < maxDepth else { return }
@@ -860,11 +884,23 @@ extension AXLogicProElements {
     }
 
     /// Text dump of the AX subtree of the current file panel, or of the focused window when
-    /// there is no panel (one line per element, indented by depth).
-    static func debugPanelDump(maxDepth: Int = 16, maxLines: Int = 300) -> String {
+    /// there is no panel (one line per element, indented by depth). With `windowTitle`, the
+    /// first window whose title contains that text (case-insensitive) is dumped instead.
+    static func debugPanelDump(maxDepth: Int = 16, maxLines: Int = 300, windowTitle: String? = nil) -> String {
         var lines: [String] = []
         let root: AXUIElement?
-        if let panel = filePanel() {
+        if let windowTitle, !windowTitle.isEmpty {
+            let wanted = windowTitle.lowercased()
+            let match = dialogCandidates().first { (AXHelpers.getTitle($0) ?? "").lowercased().contains(wanted) }
+            if let match {
+                lines.append("# window: \(AXHelpers.getTitle(match) ?? "(no title)")")
+                root = match
+            } else {
+                let titles = windowTitles().map { "'\($0)'" }.joined(separator: ", ")
+                lines.append("no window with a title containing '\(windowTitle)'. Windows: \(titles)")
+                root = nil
+            }
+        } else if let panel = filePanel() {
             lines.append("# file panel: \(AXHelpers.getTitle(panel) ?? "(no title)")")
             root = panel
         } else if let app = appRoot() {

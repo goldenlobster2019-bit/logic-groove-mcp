@@ -312,6 +312,18 @@ logic_compose("write", {
 })
 ```
 
+## Sounds and placement
+
+All of this is new in 0.4.0 and unverified until the first live session: read the step trace in every result, and read `logic_system("state")` before and after each step (track count, track names, windows, undo title).
+
+- **Put a clip on an existing track**: add `track` (0-based, same indexing as `state`) to `write`, `generate`, `complement` or `import_midi`. The import still creates a new track first; the server then cuts the region, deletes that empty track (only when its selection is read back), selects the target (read back), goes to `at_bar` and pastes. A region already at that position on the target is replaced where they overlap. If the result is an error, the `place` step says where it stopped (the region may be on the new track or on the clipboard).
+- **Insert a plug-in**: `logic_mixer("insert_plugin", { "track": 2, "slot": 0, "name": "Diva" })`. Slot 0 is the instrument, 1 and up are audio effects (`{ "track": 2, "slot": 1, "name": "Tape Delay" }`, `{ "track": 3, "slot": 0, "name": "Ultrabeat" }`). The command selects the track and reads the selection back; if that fails it refuses to act. It types the name in the slot menu's search field and presses Down, Right, Return, then confirms by the new plug-in window. Use `result_index` (extra Down presses when the first result is not the one) and `variant_index` (submenu entry; 1 = Stereo) when the default picks the wrong entry. A u-he demo notice lives inside the plug-in window, so closing the window (default) is enough.
+- **Ultrabeat drums**: Ultrabeat's init kit is not GM. Pass `"kit": "ultrabeat_init"` and keep using drum names: kick/bd = C#1 (37), snare/sd = D1 (38), closed_hat/ch/hh/hat = D#1 (39), open_hat/oh/hat2 = E1 (40), tom/low_tom/mid_tom/high_tom = F1 (41), clap/cp = F#1 (42), rim/perc/cowbell/clave/congas/tamb = G1 (43), shaker/sh/pedal_hat/ph = G#1 (44). ride, ride_bell and crash have no voice (error). The same spec works with `"kit": "gm"` (hat2 = 46, perc = 56, tom = 45).
+- **Filter movement**: `cc` lanes, for example `{ "cc": [{ "cc": 1, "points": [{ "pos": "1.1.1", "value": 20 }, { "pos": "9.1.1", "value": 110 }] }] }`. Many Diva presets map the mod wheel (CC 1) to cutoff or resonance; check the preset. Linear lanes emit an event every `resolution` 16ths (0.25 to 4, default 0.5); `"curve": "step"` emits only at the points. Lanes cover the whole clip (not tiled by `pattern_bars`).
+- **Program change**: `"program": 12` is only useful once the instrument maps program changes (for example u-he presets in the MIDI Programs folder).
+- **Cycle to the regions**: `logic_transport("cycle_to_regions")` selects all regions and sets and enables the cycle over them. `set_cycle_range` is not implemented.
+- **Typical order**: write the clip with `track`, insert instruments and effects, `cycle_to_regions`, play. Lower the levels afterwards if the Stereo Out clips.
+
 ## Genre cheat sheet
 
 | Genre | Tempo | Typical keys | Character |

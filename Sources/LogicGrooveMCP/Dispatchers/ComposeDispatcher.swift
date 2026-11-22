@@ -28,7 +28,10 @@ struct ComposeDispatcher {
             chords?: [{ pos|step, chord|pitches, octave?: Int (-1..6, default 2), \
             voicing?: "close"|"dub"|"spread"|"shell"|"rootless", inversion?: Int (0-4), strum?: Int (ticks), len?, vel?, vel_top? }], \
             steps?: { lane: pattern | { pattern, vel?, len? } }, \
-            import?: Bool (default true), at_bar?: Int (default 1), loop?: Bool (default false), tempo?: Float }. \
+            kit?: "gm"|"ultrabeat_init" (drum name map; default gm), program?: Int (0-127, Program Change at the clip start), \
+            cc?: [{ cc: Int (0-127, 1 = mod wheel), points: [{ pos|step, value: Int 0-127 }] (2-512, any order), \
+            curve?: "linear"|"step", resolution?: Float (16ths between events, 0.25-4, default 0.5) }] (max 16 lanes, over the whole clip), \
+            import?: Bool (default true), at_bar?: Int (default 1), loop?: Bool (default false), track?: Int, tempo?: Float }. \
             Syntax: pos is "bar.beat.16th" (1-based, e.g. "2.3.3"; optional 4th field = extra ticks; "bar.beat" and "bar" also work), \
             step is a 0-based index in grid steps (fractions allowed); pitch is a MIDI number, a note name in Logic octaves \
             (C3 = 60, "F1", "Bb2") or a drum name (kick, snare, clap, closed_hat, open_hat, rim, shaker, ...); \
@@ -36,11 +39,18 @@ struct ComposeDispatcher {
             chord is a symbol such as "Fm9", "Bbmaj7", "C7#9", "Fm7/C" (slash = bass note one octave below the root octave); \
             steps lane keys are drum names, note names or MIDI numbers, pattern chars: x hit, X accent, o soft, g ghost, \
             . or - rest, _ tie (extends the previous hit); spaces and | are ignored and the pattern repeats to fill bars. \
+            kit "ultrabeat_init" maps drum names to Ultrabeat's init kit (kick 37, snare 38, closed_hat 39, open_hat 40, tom 41, \
+            clap 42, perc/rim 43, shaker 44; ride and crash are an error); example { "kit": "ultrabeat_init", "steps": { "kick": "x...x..." } }. \
+            program example { "program": 12, "notes": [...] }. cc example for a filter sweep (many Diva presets map CC 1 to cutoff): \
+            { "cc": [{ "cc": 1, "points": [{ "pos": "1.1.1", "value": 20 }, { "pos": "5.1.1", "value": 110 }] }], "notes": [...] }. \
+            track (generate, write, complement, import_midi) puts the imported clip on an EXISTING track (0-based, same indexing as \
+            logic_system state) instead of the new track every import creates: cut, delete the empty new track, select the target \
+            (read back), go to at_bar, paste; a region already there is replaced where they overlap. \
             The result lists warnings (dropped, shortened or trimmed notes), the note range and an analysis (key, chords) to sanity-check. \
             analyze_region -> {} (exports the selected MIDI region, then analyzes it); \
             analyze_file -> { path: String }; \
             complement -> same params as generate; analyzes the selected region first and generates a part that fits it; \
-            import_midi -> { path: String, at_bar?: Int, loop?: Bool }; \
+            import_midi -> { path: String, at_bar?: Int, loop?: Bool, track?: Int }; \
             set_loop -> { enabled: Bool } (Region inspector Loop checkbox). \
             Results include undo_label (the Edit menu's Undo title) so you can verify what Logic did.
             """,
@@ -116,7 +126,15 @@ struct ComposeDispatcher {
                 atBar = nil
             }
             let loop = boolParam(params, "loop", default: false)
-            let outcome = await performImport(path: path, atBar: atBar, loop: loop, router: router)
+            let track: Int?
+            do {
+                track = try parseTrack(params)
+            } catch let failure as ParamError {
+                return error(failure.message)
+            } catch {
+                return Self.error("Invalid parameters")
+            }
+            let outcome = await performImport(path: path, atBar: atBar, loop: loop, track: track, router: router)
             return json(
                 .object(["path": .string(path), "import": outcome.value]),
                 isError: !outcome.ok
@@ -156,6 +174,12 @@ struct ComposeDispatcher {
             if lowered == "false" || lowered == "0" || lowered == "no" { return false }
         }
         return defaultValue
+    }
+
+    /// Optional 0-based target track.
+    private static func parseTrack(_ params: [String: Value]) throws -> Int? {
+        guard isSupplied(params, "track") else { return nil }
+        return try unwrap(InputValidation.int(params, keys: ["track"], range: 0...10_000, label: "track"))
     }
 
     private static func isSupplied(_ params: [String: Value], _ key: String) -> Bool {
@@ -333,7 +357,9 @@ struct ComposeDispatcher {
         let customName: String?
         let tempo: Double?
         let atBar: Int
+        let track: Int?
         do {
+            track = try parseTrack(params)
             request = try buildRequest(params)
             customName = try optionalString(params, "name", maxLength: 80)
             if isSupplied(params, "tempo") {
@@ -423,7 +449,7 @@ struct ComposeDispatcher {
 
         var isFailure = false
         if doImport {
-            let outcome = await performImport(path: fileURL.path, atBar: atBar, loop: loop, router: router)
+            let outcome = await performImport(path: fileURL.path, atBar: atBar, loop: loop, track: track, router: router)
             result["import"] = outcome.value
             if !outcome.ok { isFailure = true }
         } else {
@@ -441,7 +467,9 @@ struct ComposeDispatcher {
         let seed: UInt64
         let tempo: Double?
         let atBar: Int
+        let track: Int?
         do {
+            track = try parseTrack(params)
             // JSON-safe integer range so the seed round-trips through the client.
             let maxSeed = 9_007_199_254_740_991
             if isSupplied(params, "seed") {
@@ -523,13 +551,15 @@ struct ComposeDispatcher {
             ]),
             "preview_bar1": .array(preview),
             "warnings": .array(warningValues),
+            "cc_event_count": .int(clip.controls.count),
+            "program": clip.program.map { Value.int($0) } ?? Value.null,
             "tempo_written": tempo.map { Value.double($0) } ?? Value.null,
         ]
         result["analysis"] = analysisValue(Analyzer.analyze(clip), path: fileURL.path)
 
         var isFailure = false
         if doImport {
-            let outcome = await performImport(path: fileURL.path, atBar: atBar, loop: loop, router: router)
+            let outcome = await performImport(path: fileURL.path, atBar: atBar, loop: loop, track: track, router: router)
             result["import"] = outcome.value
             if !outcome.ok { isFailure = true }
         } else {
@@ -540,14 +570,29 @@ struct ComposeDispatcher {
 
     // MARK: - Import
 
-    /// Move the playhead, import the file, optionally enable Loop on the new region.
+    /// Move the playhead, import the file, optionally put the region on an existing track, optionally
+    /// enable Loop on the region.
     private static func performImport(
         path: String,
         atBar: Int?,
         loop: Bool,
+        track: Int? = nil,
         router: ChannelRouter
     ) async -> (ok: Bool, value: Value) {
         var steps: [String: Value] = [:]
+
+        // The new track an import creates has index == the track count before the import.
+        let tracksBefore = AXLogicProElements.trackHeaderCount()
+        if let track {
+            guard tracksBefore > 0 else {
+                steps["place"] = stepValue(.error("Cannot read the track list (0 track headers); nothing was imported. Open the project window and retry"))
+                return (false, .object(steps))
+            }
+            guard track < tracksBefore else {
+                steps["place"] = stepValue(.error("track \(track) does not exist (the project has \(tracksBefore) tracks, indexes 0-\(tracksBefore - 1)); nothing was imported"))
+                return (false, .object(steps))
+            }
+        }
 
         if let atBar {
             let nav = await router.route(
@@ -569,6 +614,45 @@ struct ComposeDispatcher {
         steps["import"] = stepValue(imported)
         if !imported.isSuccess {
             return (false, .object(steps))
+        }
+
+        if let track {
+            let bar = atBar ?? 1
+            var place: [String: Value] = [:]
+            func placeResult(_ ok: Bool, _ message: String) -> (ok: Bool, value: Value) {
+                place["ok"] = .bool(ok)
+                place["status"] = .string(ok ? "unverified" : "error")
+                place["message"] = .string(message)
+                steps["place"] = .object(place)
+                return (ok, .object(steps))
+            }
+            await pause(300)
+            let moved = await router.route(
+                operation: "region.move_selected_to_track",
+                params: ["new_index": String(tracksBefore), "track": String(track)]
+            )
+            place["cut_and_select"] = stepValue(moved)
+            guard moved.isSuccess else {
+                return placeResult(false, "The region stays on the new track \(tracksBefore) (or is on the clipboard): \(moved.message)")
+            }
+            let nav = await router.route(
+                operation: "transport.goto_position",
+                params: ["position": "\(bar).1.1.1"]
+            )
+            place["goto_bar"] = stepValue(nav)
+            guard nav.isSuccess else {
+                return placeResult(false, "The region is on the clipboard and was NOT pasted: could not move the playhead to bar \(bar): \(nav.message)")
+            }
+            await pause(300)
+            let pasted = await router.route(
+                operation: "region.paste_on_track",
+                params: ["track": String(track), "bar": String(bar)]
+            )
+            place["paste"] = stepValue(pasted)
+            guard pasted.isSuccess else {
+                return placeResult(false, pasted.message)
+            }
+            _ = placeResult(true, pasted.message)
         }
 
         if loop {

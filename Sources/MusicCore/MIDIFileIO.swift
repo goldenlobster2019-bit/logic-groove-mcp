@@ -60,15 +60,25 @@ public enum MIDIFileIO {
 
     private static func clipTrackBody(_ clip: Clip, offset: Int) -> [UInt8] {
         // (tick, order 0 = off / 1 = on, pitch, bytes)
+        // order: 0 note-off, 1 program change, 2 controller, 3 note-on (so setup precedes notes at the same tick).
         struct Ev { var tick: Int; var order: Int; var pitch: Int; var bytes: [UInt8] }
         var events = [Ev]()
+        if let program = clip.program {
+            let ch = UInt8(min(max(clip.notes.first?.channel ?? 1, 1), 16) - 1)
+            events.append(Ev(tick: 0, order: 1, pitch: 0, bytes: [0xC0 | ch, UInt8(min(max(program, 0), 127))]))
+        }
+        for c in clip.controls {
+            let ch = UInt8(min(max(c.channel, 1), 16) - 1)
+            events.append(Ev(tick: max(0, c.tick + offset), order: 2, pitch: c.controller,
+                             bytes: [0xB0 | ch, UInt8(min(max(c.controller, 0), 127)), UInt8(min(max(c.value, 0), 127))]))
+        }
         for n in clip.notes where n.duration > 0 {
             let pitch = min(max(n.pitch, 0), 127)
             let vel = min(max(n.velocity, 1), 127)
             let ch = UInt8(min(max(n.channel, 1), 16) - 1)
             let start = max(0, n.start + offset)
             let end = start + n.duration
-            events.append(Ev(tick: start, order: 1, pitch: pitch, bytes: [0x90 | ch, UInt8(pitch), UInt8(vel)]))
+            events.append(Ev(tick: start, order: 3, pitch: pitch, bytes: [0x90 | ch, UInt8(pitch), UInt8(vel)]))
             events.append(Ev(tick: end, order: 0, pitch: pitch, bytes: [0x80 | ch, UInt8(pitch), 0x40]))
         }
         events.sort { ($0.tick, $0.order, $0.pitch) < ($1.tick, $1.order, $1.pitch) }
@@ -165,18 +175,21 @@ public enum MIDIFileIO {
                 NoteEvent(start: rescale($0.start), duration: max(1, rescale($0.end) - rescale($0.start)),
                           pitch: $0.pitch, velocity: $0.velocity, channel: $0.channel)
             }
-            func makeClip(_ name: String, _ ns: [NoteEvent]) -> Clip {
+            let controls = parsed.controls.map {
+                ControlEvent(tick: rescale($0.tick), controller: $0.controller, value: $0.value, channel: $0.channel)
+            }
+            func makeClip(_ name: String, _ ns: [NoteEvent], _ cs: [ControlEvent]) -> Clip {
                 let end = ns.map { $0.end }.max() ?? 0
                 let bars = max(1, (end + bar - 1) / bar)
-                return Clip(name: name, notes: ns, lengthTicks: bars * bar)
+                return Clip(name: name, notes: ns, lengthTicks: bars * bar, program: parsed.program, controls: cs)
             }
             let channels = Set(notes.map { $0.channel })
             if format == 0 && channels.count > 1 {
                 for ch in channels.sorted() {
-                    clips.append(makeClip("\(baseName) ch\(ch)", notes.filter { $0.channel == ch }))
+                    clips.append(makeClip("\(baseName) ch\(ch)", notes.filter { $0.channel == ch }, controls.filter { $0.channel == ch }))
                 }
             } else {
-                clips.append(makeClip(baseName, notes))
+                clips.append(makeClip(baseName, notes, controls))
             }
         }
 
@@ -193,7 +206,10 @@ public enum MIDIFileIO {
         var name: String?
         var tempo: (tick: Int, bpm: Double)?
         var timeSig: (tick: Int, num: Int, den: Int)?
+        var program: Int?
+        var controls: [RawControl] = []
     }
+    private struct RawControl { var tick: Int; var controller: Int; var value: Int; var channel: Int }
 
     private static func parseTrack(_ b: [UInt8], _ start: Int, _ end: Int) throws -> ParsedTrack {
         var r = ParsedTrack()
@@ -274,6 +290,10 @@ public enum MIDIFileIO {
                     open[ch * 128 + Int(d1), default: []].append(r.notes.count - 1)
                 } else if kind == 0x80 || kind == 0x90 {
                     noteOff(ch, Int(d1))
+                } else if kind == 0xC0 {
+                    if r.program == nil { r.program = Int(d1) }
+                } else if kind == 0xB0 {
+                    r.controls.append(RawControl(tick: tick, controller: Int(d1), value: Int(d2), channel: ch + 1))
                 }
             }
         }

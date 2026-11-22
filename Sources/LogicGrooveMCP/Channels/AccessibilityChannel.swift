@@ -44,6 +44,8 @@ actor AccessibilityChannel: Channel {
             return setTempo(params: params)
         case "transport.set_cycle_range":
             return setCycleRange(params: params)
+        case "transport.cycle_to_regions":
+            return await cycleToRegions()
 
         // MARK: - Track reads
         case "track.get_tracks":
@@ -104,6 +106,10 @@ actor AccessibilityChannel: Channel {
             return await setRegionLoop(params: params)
         case "region.export_selected_midi":
             return await exportSelectedMIDI()
+        case "region.move_selected_to_track":
+            return await moveSelectedToTrack(params: params)
+        case "region.paste_on_track":
+            return await pasteOnTrack(params: params)
 
         // MARK: - MIDI file import
         case "midi.import_file":
@@ -193,11 +199,8 @@ actor AccessibilityChannel: Channel {
     }
 
     private func setCycleRange(params: [String: String]) -> ChannelResult {
-        // Cycle range setting via AX is fragile — requires locating the cycle locators
-        guard let _ = params["start"], let _ = params["end"] else {
-            return .error("Missing 'start' and/or 'end' parameters")
-        }
-        return .error("Cycle range setting not yet fully implemented via AX")
+        // Setting arbitrary locators is not implemented; the menu based way works from the regions.
+        return .error("set_cycle_range is not implemented. Use logic_transport cycle_to_regions: it selects all regions and sets the cycle to them through Navigate > Set Rounded Locators by Selection and Enable Cycle.")
     }
 
     // MARK: - Tracks

@@ -60,14 +60,14 @@ logic_edit("last_undo", {})
 | Tool | Purpose | Example |
 |------|---------|---------|
 | `logic_compose` | styles, generate, write, analyze_region, analyze_file, complement, import_midi, set_loop | `logic_compose("generate", {genre: "house", part: "bass"})` |
-| `logic_transport` | play, stop, record, set_tempo, goto_position... | `logic_transport("set_tempo", {tempo: 124})` |
+| `logic_transport` | play, stop, record, set_tempo, goto_position, cycle_to_regions... | `logic_transport("set_tempo", {tempo: 124})` |
 | `logic_tracks` | select, create_audio, create_instrument, mute, solo, arm, rename... | `logic_tracks("mute", {index: 2, enabled: true})` |
-| `logic_mixer` | set_volume, set_pan, insert_plugin, bypass_plugin... | `logic_mixer("set_volume", {track: 0, value: 0.8})` |
+| `logic_mixer` | set_volume, set_pan, insert_plugin, bypass_plugin... | `logic_mixer("insert_plugin", {track: 2, slot: 0, name: "Diva"})` |
 | `logic_midi` | send_note, send_cc, send_chord, MMC | `logic_midi("send_note", {note: 60, velocity: 100, channel: 1, duration_ms: 500})` |
 | `logic_edit` | undo, redo, cut, copy, paste, quantize, split, last_undo | `logic_edit("quantize", {value: "1/16"})` |
 | `logic_navigate` | goto_bar, markers, toggle_view, refresh_editor, open_piano_roll | `logic_navigate("goto_bar", {bar: 9})` |
 | `logic_project` | new, open, save, bounce, launch, quit | `logic_project("open", {path: "/path/to/song.logicx"})` |
-| `logic_system` | health, permissions, refresh_cache, state, debug_panel, debug_focus, help | `logic_system("help", {category: "compose"})` |
+| `logic_system` | health, permissions, refresh_cache, state, debug_panel, debug_strip, debug_focus, help | `logic_system("help", {category: "compose"})` |
 
 Prefer `logic_system("state")` for reading project, transport, tracks, regions and live AX facts (track count, Undo title, open panels): MCP resources are not reachable from every client. Resources (read-only): `logic://transport/state`, `logic://tracks`, `logic://tracks/{index}`, `logic://mixer`, `logic://project/info`, `logic://midi/ports`, `logic://system/health`.
 
@@ -88,6 +88,7 @@ Full command reference: `logic_system("help", {category: "all"})`.
 | `octave` | Root octave, Logic numbering (C3 = 60). Bass defaults to 1, other parts to 2 |
 | `seed` | Reproducible output. Random if omitted, always returned |
 | `import`, `at_bar`, `loop`, `tempo`, `name` | Import into Logic (default true), target bar (default 1), enable region Loop, write tempo into the file, clip name |
+| `track` | 0-based index of an existing track to put the imported clip on (see "Sounds and placement", new in 0.4.0) |
 
 Deep house and house currently share the same pattern generators; they differ in default scale (minor vs dorian) and clip naming.
 
@@ -106,7 +107,20 @@ Deep house and house currently share the same pattern generators; they differ in
 | `notes` | `[{ pos or step, pitch, len?, vel? }]` |
 | `chords` | `[{ pos or step, chord or pitches, octave?, voicing?, inversion?, strum?, len?, vel?, vel_top? }]` |
 | `steps` | `{ lane: pattern }` or `{ lane: { pattern, vel?, len? } }` |
-| `import`, `at_bar`, `loop`, `tempo` | As for `generate` |
+| `kit` | `"gm"` (default) or `"ultrabeat_init"`: which drum map the drum names use (0.4.0) |
+| `program` | Program Change 0 to 127 written at the clip start (0.4.0) |
+| `cc` | `[{ cc, points: [{ pos or step, value }], curve?, resolution? }]`: controller lanes, for example a mod wheel (CC 1) sweep (0.4.0) |
+| `import`, `at_bar`, `loop`, `tempo`, `track` | As for `generate` |
+
+### Sounds and placement (0.4.0, not yet verified in a live session)
+
+- `kit: "ultrabeat_init"` maps drum names to Ultrabeat's init kit instead of GM: `kick`/`bd` C#1 (37), `snare`/`sd` D1 (38), `closed_hat`/`ch`/`hh`/`hat` D#1 (39), `open_hat`/`oh`/`hat2` E1 (40), toms F1 (41), `clap`/`cp` F#1 (42), `rim`/`perc`/`cowbell`/`clave`/congas/`tamb` G1 (43), `shaker`/`pedal_hat` G#1 (44). `ride`, `ride_bell` and `crash` have no voice and are an error.
+- `program` writes a Program Change at the clip start; only useful once the instrument maps program changes.
+- `cc` lanes: `cc` 0 to 127 (1 = mod wheel), `points` 2 to 512 with `value` 0 to 127 (any order), `curve` `"linear"` (default, an event every `resolution` 16ths, 0.25 to 4, default 0.5) or `"step"`. Lanes cover the whole clip and are not tiled by `pattern_bars`.
+- `track` (on `write`, `generate`, `complement`, `import_midi`) puts the clip on an existing track: after the import the region is cut, the empty new track is deleted (only when its selection is read back), the target track is selected (read back), the playhead goes to `at_bar` and the region is pasted. A region already there is replaced where they overlap.
+- `logic_mixer("insert_plugin", {track, slot, name, result_index?, variant_index?})`: slot 0 is the instrument, 1+ are effects. The track is selected and read back first; if that fails nothing is changed. The plug-in is chosen with the keyboard in the slot menu's search field and confirmed by the new plug-in window.
+- `logic_transport("cycle_to_regions")` selects all regions and sets and enables the cycle over them.
+- `logic_system("debug_panel", {window, max_lines})` and `logic_system("debug_strip")` dump AX trees for diagnosing slot and window problems.
 
 Syntax:
 
@@ -463,7 +477,7 @@ Needs testing on more Macs and Logic versions:
 - Piano Roll can stay on an old region; use `logic_navigate("refresh_editor")` or reopen the project.
 - Logic exposes no programmatic API: UI paths change between versions, AX labels are localized, and OSC needs a manual Control Surface setup.
 
-The server never clicks at screen coordinates.
+The server never clicks at screen coordinates, with one exception added in 0.4.0: when a track cannot be selected through Accessibility or arrow keys, `selectTrackVerified` clicks the track number column of an AX-located track header as a last resort. The 0.4.0 features (verified track selection, keyboard plug-in insert, `track` placement, `cycle_to_regions`, `kit`, `program`, `cc`) have not run against Logic yet; every UI step returns a trace to read.
 
 ## Architecture
 

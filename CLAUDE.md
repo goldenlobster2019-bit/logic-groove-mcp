@@ -2,17 +2,17 @@
 
 ## Purpose
 
-MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write electronic music parts (house, deep house, dub techno). Fork of koltyj/logic-pro-mcp (MIT, Kolton Jacobs), renamed and extended by Golden Lobster Studio (Sorin Gheorghita). Repo: https://github.com/goldenlobster2019-bit/logic-groove-mcp. Version 0.3.1.
+MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write electronic music parts (house, deep house, dub techno). Fork of koltyj/logic-pro-mcp (MIT, Kolton Jacobs), renamed and extended by Golden Lobster Studio (Sorin Gheorghita). Repo: https://github.com/goldenlobster2019-bit/logic-groove-mcp. Version 0.4.0.
 
 ## Structure
 
 - `Package.swift` - MusicCore + its tests always; server target `LogicGrooveMCP` and `LogicGrooveMCPTests` only under `#if os(macOS)`.
 - `Sources/MusicCore/` - pure Swift (Foundation only), Linux-tested.
-  - `Types.swift` - ppq (480), NoteEvent, Clip, Genre, Part, GenerationRequest, ClipAnalysis, SeededRandom, DrumNote map.
+  - `Types.swift` - ppq (480), NoteEvent, ControlEvent, Clip (notes plus optional `program` and `controls`), Genre, Part, GenerationRequest, ClipAnalysis, SeededRandom, DrumNote map.
   - `Theory.swift` - note names, scales, chord building, chord naming.
-  - `MIDIFileIO.swift` - Standard MIDI File reader/writer (tempo meta only when passed).
+  - `MIDIFileIO.swift` - Standard MIDI File reader/writer (tempo meta only when passed; Program Change and controller events written and read back).
   - `Analyzer.swift` - key, chord and onset-grid analysis of a Clip.
-  - `ClipWriter.swift` - free-form clip builder for `logic_compose write`: JSON spec (notes, chords, step patterns) to a Clip; chord symbol parser, voicings, drum name table, swing/humanize, warnings.
+  - `ClipWriter.swift` - free-form clip builder for `logic_compose write`: JSON spec (notes, chords, step patterns, `kit`, `program`, `cc` lanes) to a Clip; chord symbol parser, voicings, drum name tables (gm, ultrabeat_init), swing/humanize, warnings.
   - `Generators/Generator.swift` - public API (generate, complement, styles), request resolution, style catalogue.
   - `Generators/DubTechno.swift`, `House.swift` - per genre/part pattern builders (house and deep_house share House.swift).
   - `Generators/Groove.swift` - swing, humanize, interlock with stab onsets, finalize.
@@ -20,12 +20,12 @@ MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write elec
   - `main.swift` - entry, `--check-permissions`.
   - `Server/` - `LogicProServer.swift` (tool/resource registration, class name kept from upstream), `ServerConfig.swift` (name, ports, timeouts, MIDI port names).
   - `Dispatchers/` - one file per MCP tool (transport, tracks, mixer, midi, edit, navigate, project, compose, system).
-  - `Channels/` - `Channel.swift` (protocol, ChannelID, ChannelResult), `ChannelRouter.swift` (routing table), CoreMIDI, Accessibility (+Compose), CGEvent, AppleScript, OSC channels, `FilePanelAutomation.swift` (open/save panel driving).
-  - `Accessibility/` - AX wrappers; `AXLogicProElements+Compose.swift` holds menu/panel/inspector/plugin finders.
+  - `Channels/` - `Channel.swift` (protocol, ChannelID, ChannelResult), `ChannelRouter.swift` (routing table), CoreMIDI, Accessibility (+Compose: import/export, verified track selection, plug-in insert; +Placement: region move to an existing track, cycle to regions), CGEvent, AppleScript, OSC channels, `FilePanelAutomation.swift` (open/save panel driving).
+  - `Accessibility/` - AX wrappers; `AXLogicProElements+Compose.swift` holds menu/panel/inspector/plugin finders; `AXLogicProElements+Tracks.swift` holds selection read-back, focus, window-set, plug-in slot press and strip diagnostics.
   - `MIDI/`, `OSC/` - CoreMIDI engine and MMC, UDP OSC client/server.
   - `State/` - cache, models, adaptive poller. `Resources/` - 7 MCP resources.
   - `Utilities/` - `ComposeSupport.swift` (folders, file names, positions, path validation), input validation, logging, permissions, process utils.
-- `Tests/MusicCoreTests/` - generator, analyzer, MIDI IO, ClipWriter and doc-recipe tests (run everywhere). `Tests/LogicGrooveMCPTests/` - macOS only.
+- `Tests/MusicCoreTests/` - generator, analyzer, MIDI IO, ClipWriter (+ `ClipWriterKitCCTests.swift` for kit/program/cc) and doc-recipe tests (run everywhere). `Tests/LogicGrooveMCPTests/` - macOS only.
 - `docs/SKILL.md` - agent skill teaching the music workflow. `Scripts/install.sh`, `manifest.json`, `.github/workflows/{ci,release}.yml`.
 
 ## Conventions
@@ -42,7 +42,7 @@ MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write elec
 
 ## Build and test
 
-- This environment is Linux: `export PATH=/opt/swift/swift-6.0.3-RELEASE-ubuntu24.04/usr/bin:$PATH && swift test` runs MusicCore tests only (85 tests at last run).
+- This environment is Linux: `export PATH=/opt/swift/swift-6.0.3-RELEASE-ubuntu24.04/usr/bin:$PATH && swift test` runs MusicCore tests only (107 tests at last run).
 - Accessibility must be re-granted after each rebuild unless the binary is signed with a stable identity (an Apple Development certificate or a self-signed "Logic Groove Signing" certificate; `Scripts/install-local.sh` picks either).
 - The AX/CGEvent/CoreMIDI code cannot be compiled on Linux. macOS CI (`macos-15`, `swift build -c release` + `swift test`) is the only compile check. Push and read CI before trusting server changes.
 - CI also runs a Linux job in the `swift:6.0` container.
@@ -61,6 +61,16 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 
 8. Version 0.3.1 (import fix): `midi.import_file` rewritten (never types blind; Accessibility selection first, Go to sheet only with a confirmed text field; verified by track count and Undo title; returns a step trace); `FilePanelAutomation.goToChecked`; `AXLogicProElements.importPanel`, `selectFileInPanel`, `panelConfirmButtonState`, focus and subtree-dump helpers; Go To Position confirms the dialog before typing; `logic_system` gained `state`, `debug_panel`, `debug_focus`; installer accepts a self-signed "Logic Groove Signing" identity. Written without a macOS compile: read CI first.
 9. Import staging path and checked typing (still 0.3.1): `importMIDIFile` copies the file to `~/Music/LogicGrooveMCP/Import/clip.mid` and imports that copy; `goToChecked` keeps a matching prefill or types in up to 3 read-back-checked attempts and never presses Return unless the field holds the wanted path (`ComposeSupport.pathsEqual`, `importStagingURL`); verification by track count only. Written without a macOS compile: read CI first.
+
+10. Version 0.4.0 (sounds and placement; FIRST LIVE TEST PENDING for all of Part B, nothing below has ever run against Logic, and the server code was written without a macOS compile: read CI first):
+    - MusicCore (tested here): `kit` ("gm" | "ultrabeat_init", `ClipWriter.drumNames(kit:)`, hat2/perc/tom added to GM), `program` (Program Change at tick 0 before the first note), `cc` lanes (linear/step, resolution, dedupe of interpolated values, exact point values always emitted, not tiled by `pattern_bars`, max 16 lanes / 20000 events), `Clip.program`, `Clip.controls`, `ControlEvent`, `MIDIFileIO` write/read of both. Specs without the new keys produce byte-identical MIDI.
+    - Import pre-check bug fixed: `importMIDIFile` now refuses only when the strict `importPanel()` is up (a plug-in window no longer blocks imports). The export flow and `file_panel_open` use the new `strictFilePanel()` (import panel, window titled Save/Export/Open, or a file-panel-looking sheet) instead of the loose `filePanel()` (kept for diagnostics).
+    - `AccessibilityChannel.selectTrackVerified(index:)` plus `AXLogicProElements.selectedTrackIndex()`: AXPress, AXSelected, arrow keys, last-resort mouse click, each re-read after 200 ms; ok only when the read-back equals the wanted index.
+    - `insertPlugin` rewritten: verified track, short AX messaging timeout on the slot press (return value ignored), wait for a focused text field, type the name with read-back, Down x result_index, Right, Down x (variant_index - 1), Return, confirm by a new window (multiset of window titles), close only the new window(s). Params `result_index`, `variant_index`. Result is `.success` only when a new window appeared.
+    - `track` on `logic_compose` write/generate/complement/import_midi: routed ops `region.move_selected_to_track` (cut, delete the empty temporary track when its selection is verified, select the target verified) and `region.paste_on_track` (re-verify selection, Edit > Paste); `goto_position` runs between them; the result JSON gets a `place` step.
+    - `logic_transport cycle_to_regions` (Edit > Select > All, Navigate > Set Rounded Locators by Selection and Enable Cycle); `set_cycle_range` now returns an error pointing to it.
+    - `logic_system debug_panel` gained `window` and `max_lines`; new `debug_strip`.
+    - Earlier fixed: the "plug-in window blocks import" bug (see first bullet).
 
 ## Verified on a real Mac (Logic Pro 11, 2026-10-18)
 
@@ -93,7 +103,6 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 - Ultrabeat init kit mapping (NOT GM): C1 sine, C#1 kick, D1 snare, D#1 hat 1, E1 hat 2, F1 tom, F#1 claps, G1 perc, G#1 shaker, A1 bass, A#1 sample; voice 25 is a chromatic bass from C3 up. Drum clips for it must use these notes, not the GM drum names.
 - Every import lands on a new track with the default instrument, so the instrument has to be set after each import (or the region moved to an existing track). `transport.set_cycle_range` is not implemented.
 
-- BUG to fix: `importMIDIFile` refuses with "A file panel is already open (window '<plug-in window title>' ...)" whenever any plug-in window is open, because the pre-check uses `filePanel()` (any AXDialog). It must use the stricter `importPanel()` / `looksLikeFilePanel`, or close plug-in windows first.
 - Audio FX slot: clicking the first empty slot under the last effect opens the same searchable menu; "Tape Delay" + Down + Right + Return inserts it (Stereo). Tape Delay defaults are already dub friendly (tempo sync, feedback 61 %, low cut 520 Hz, high cut 1500 Hz, dry 90 / wet 30); the Note pop-up is a normal menu (Up/Down + Return): "1/8 dotted" was set on the stab track.
 - Menu items that work without any clicking and should be used by the server: Edit > Select > All, then Navigate > Set Rounded Locators by Selection and Enable Cycle (sets the cycle to the regions). Navigate items are disabled until something is selected.
 - Putting an imported region on an existing instrument track currently needs a mouse drag from the new track to the target track (same x keeps the bar; with Drag: No Overlap it replaces the region underneath). A server-side way is needed (for example select the target track and paste at the playhead).
@@ -121,11 +130,14 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
 - An import is verified only by a higher track count.
 - Never type into a panel or dialog unless the target text field is confirmed through AX; cancel and return an error with a trace instead.
 - State is exposed through `logic_system state` because MCP resources are not reachable from every client.
+- A synthetic mouse click is allowed in exactly one place: the last-resort track selection in `selectTrackVerified` (track number column of an AX-located header). Everything else stays AX or keyboard.
+- Plug-ins are inserted through the slot menu's search field with the keyboard (type, Down, Right, Return) and confirmed by the new plug-in window.
+- A plug-in is never inserted unless the target track selection was read back.
 
 - Never use Space for stop/play; use keypad 0 / Enter style keys (and MMC first).
 - Track creation goes through Track menu items first, keyboard as fallback.
 - Every mutating compose/plugin result carries `undo_label` (Edit menu Undo title) for verification; `edit.last_undo` reads it without pressing anything.
-- The server never clicks at screen coordinates; every step finds an AX element or reports what it saw.
+- The server never clicks at screen coordinates, except the single last-resort track header click described below; every step finds an AX element or reports what it saw.
 - Tempo meta is written to MIDI only when `tempo` is passed, so imports do not change the project tempo.
 - Prefer writing MIDI files and importing them over drawing notes.
 - Never delete user material; create new tracks, mute instead of delete.

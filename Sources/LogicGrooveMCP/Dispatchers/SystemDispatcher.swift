@@ -33,13 +33,16 @@ struct SystemDispatcher {
         name: "logic_system",
         description: """
             Diagnostics and help for the Logic Groove MCP server. \
-            Commands: health, permissions, refresh_cache, debug_windows, debug_panel, debug_focus, state, help. \
+            Commands: health, permissions, refresh_cache, debug_windows, debug_panel, debug_strip, debug_focus, state, help. \
             Params by command: \
             help -> { category: String } (returns full param docs for a dispatcher); \
             refresh_cache -> {} (force AX re-poll); \
             state -> {} (JSON: project, transport, tracks, regions from the cache, plus live: \
             track_header_count, undo_title, file_panel_open, windows; use it to verify results); \
-            debug_panel -> {} (AX subtree dump of the open file panel, or of the focused window); \
+            debug_panel -> { window?: String (case-insensitive part of a window title: dump that window instead), \
+            max_lines?: Int (50-1500, default 300) } (AX subtree dump of the open file panel, or of the focused window); \
+            debug_strip -> { max_lines?: Int (50-1500, default 300) } (Inspector channel strip: selected track index, \
+            plug-in slot candidates with frames and the AX subtree); \
             debug_focus -> {} (focused element and focused window); \
             Others -> {}
             """,
@@ -105,7 +108,16 @@ struct SystemDispatcher {
             return CallTool.Result(content: [.text(lines.joined(separator: "\n"))], isError: false)
 
         case "debug_panel":
-            return CallTool.Result(content: [.text(AXLogicProElements.debugPanelDump())], isError: false)
+            let maxLines = min(max(params["max_lines"]?.intValue ?? 300, 50), 1_500)
+            let window = params["window"]?.stringValue
+            return CallTool.Result(
+                content: [.text(AXLogicProElements.debugPanelDump(maxLines: maxLines, windowTitle: window))],
+                isError: false
+            )
+
+        case "debug_strip":
+            let maxLines = min(max(params["max_lines"]?.intValue ?? 300, 50), 1_500)
+            return CallTool.Result(content: [.text(AXLogicProElements.debugStripDump(maxLines: maxLines))], isError: false)
 
         case "debug_focus":
             let focus = AXLogicProElements.focusedFieldSummary() ?? "none"
@@ -121,7 +133,7 @@ struct SystemDispatcher {
                 live: LiveState(
                     track_header_count: AXLogicProElements.trackHeaderCount(),
                     undo_title: AXLogicProElements.undoMenuTitle(),
-                    file_panel_open: AXLogicProElements.filePanel() != nil,
+                    file_panel_open: AXLogicProElements.strictFilePanel() != nil,
                     windows: AXLogicProElements.allWindows().map { AXHelpers.getTitle($0) ?? "" }
                 )
             )
@@ -141,7 +153,7 @@ struct SystemDispatcher {
 
         default:
             return CallTool.Result(
-                content: [.text("Unknown system command: \(command). Available: health, permissions, refresh_cache, debug_windows, debug_panel, debug_focus, state, help")],
+                content: [.text("Unknown system command: \(command). Available: health, permissions, refresh_cache, debug_windows, debug_panel, debug_strip, debug_focus, state, help")],
                 isError: true
             )
         }
@@ -165,7 +177,9 @@ struct SystemDispatcher {
                   toggle_count_in   -> {} — Toggle count-in
                   set_tempo         -> { tempo: Float } — Set BPM (20-999)
                   goto_position     -> { bar: Int } or { time: "HH:MM:SS:FF" }
-                  set_cycle_range   -> { start: Int, end: Int } — Bar numbers
+                  set_cycle_range   -> not implemented (returns an error pointing to cycle_to_regions)
+                  cycle_to_regions  -> {} — Select all regions, then set the cycle to them and enable it
+                                       (Navigate > Set Rounded Locators by Selection and Enable Cycle)
 
                 Read state via resource: logic://transport/state
                 """
@@ -200,9 +214,17 @@ struct SystemDispatcher {
                   set_master_volume -> { value: Float }
                   toggle_eq         -> { track: Int }
                   reset_strip       -> { track: Int }
-                  insert_plugin     -> { track: Int, slot: Int (0/"instrument" = instrument,
-                                       1+ = audio effect slot), name: String, close_window?: Bool }
-                                       Result includes undo_label.
+                  insert_plugin     -> { track?: Int (0-based), slot: Int (0/"instrument" = instrument,
+                                       1+ = audio effect slot), name: String,
+                                       result_index? (default 1: Down presses in the search results),
+                                       variant_index? (default 1: submenu entry, 1 = Stereo),
+                                       close_window?: Bool }
+                                       `track` is selected and read back first; if that fails nothing
+                                       is changed. Keyboard-driven (type, Down, Right, Return),
+                                       confirmed by the new plug-in window. Message has a step trace;
+                                       result includes undo_label.
+                                       Example: { "track": 2, "slot": 0, "name": "Diva" }
+                                       Example: { "track": 2, "slot": 1, "name": "Tape Delay" }
                   bypass_plugin     -> { track: Int, slot: Int, bypassed: Bool }
 
                 Read state via resource: logic://mixer
@@ -285,8 +307,29 @@ struct SystemDispatcher {
                                            rootless), inversion? (0-4), strum? (ticks 0-120),
                                            len?, vel?, vel_top? }],
                                          steps?: { lane: pattern | { pattern, vel?, len? } },
+                                         kit? ("gm" default | "ultrabeat_init"), program? (0-127),
+                                         cc?: [{ cc, points: [{ pos|step, value }], curve?, resolution? }],
                                          import? (default true), at_bar? (default 1),
-                                         loop? (default false), tempo? }
+                                         loop? (default false), track? (0-based), tempo? }
+                                       kit: "ultrabeat_init" maps drum names to Ultrabeat's init kit
+                                         (C#1 kick 37, D1 snare 38, D#1 hats 39/40, F1 tom 41,
+                                         F#1 clap 42, G1 perc 43, G#1 shaker 44); ride, ride_bell and
+                                         crash have no voice there and are an error.
+                                         Example: { "kit": "ultrabeat_init", "steps": { "kick": "x...x...", "hat": "..x...x." } }
+                                       program: Program Change at the clip start (only useful once the
+                                         instrument maps program changes). Example: { "program": 12, ... }
+                                       cc: controller lanes over the whole clip (not tiled by pattern_bars).
+                                         cc 0-127 (1 = mod wheel, many Diva presets map it to cutoff),
+                                         points 2-512 with value 0-127 (any order), curve "linear" (default,
+                                         an event every `resolution` 16ths, 0.25-4, default 0.5) or "step".
+                                         Example: { "cc": [{ "cc": 1, "points": [{ "pos": "1.1.1", "value": 20 },
+                                           { "pos": "5.1.1", "value": 110 }] }], ... }
+                                       track: put the imported clip on this EXISTING track (0-based, same
+                                         indexing as logic_system state) instead of the new track an import
+                                         creates: cut, delete the empty new track, select the target (read
+                                         back), go to at_bar, paste. A region already at that position on the
+                                         target is replaced where they overlap. Works for write, generate,
+                                         complement and import_midi. Example: { "track": 2, "at_bar": 5, ... }
                                        pos: "bar.beat.16th", 1-based ("2.3.3"); optional 4th field
                                          = extra ticks 0-119 ("1.1.3.60"); "bar.beat" and "bar" work.
                                        step: 0-based index in grid steps, fractions allowed (2.5).
@@ -312,7 +355,7 @@ struct SystemDispatcher {
                   analyze_region    -> {} — Export the selected MIDI region and analyze it
                   analyze_file      -> { path: String } — Analyze an existing .mid file
                   complement        -> same params as generate; fits the selected region
-                  import_midi       -> { path: String, at_bar?: Int, loop?: Bool }
+                  import_midi       -> { path: String, at_bar?: Int, loop?: Bool, track?: Int }
                   set_loop          -> { enabled: Bool } — Region inspector Loop checkbox
 
                 Verify results by reading logic_system state (track_header_count, undo_title).
@@ -347,7 +390,11 @@ struct SystemDispatcher {
                   state             -> {} — JSON: project, transport, tracks, regions (cache) plus
                                        live { track_header_count, undo_title, file_panel_open, windows }
                   debug_windows     -> {} — Windows, buttons and whether a file panel is found
-                  debug_panel       -> {} — AX subtree dump of the open file panel (or focused window)
+                  debug_panel       -> { window?: String, max_lines?: Int (50-1500) } — AX subtree dump of
+                                       the open file panel, of the window whose title contains `window`,
+                                       or of the focused window
+                  debug_strip       -> { max_lines?: Int } — Inspector channel strip: selected track index,
+                                       slot candidates with frames, subtree
                   debug_focus       -> {} — Focused element and focused window
                   help              -> { category: String } — Param docs per category
 

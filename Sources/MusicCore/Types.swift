@@ -45,17 +45,42 @@ public struct NoteEvent: Equatable, Hashable, Codable, Sendable {
     public var end: Int { start + duration }
 }
 
+/// A single MIDI controller (CC) event.
+public struct ControlEvent: Equatable, Hashable, Codable, Sendable {
+    /// Position in ticks.
+    public var tick: Int
+    /// Controller number 0...127 (1 = mod wheel).
+    public var controller: Int
+    /// Value 0...127.
+    public var value: Int
+    /// MIDI channel 1...16.
+    public var channel: Int
+
+    public init(tick: Int, controller: Int, value: Int, channel: Int = 1) {
+        self.tick = tick
+        self.controller = controller
+        self.value = value
+        self.channel = channel
+    }
+}
+
 /// A named clip of notes — one future Logic region / one MIDI track in a file.
 public struct Clip: Equatable, Codable, Sendable {
     public var name: String
     public var notes: [NoteEvent]
     /// Length of the clip in ticks (used for looping and for the region length).
     public var lengthTicks: Int
+    /// Optional Program Change (0...127) written at tick 0 of the clip's track.
+    public var program: Int?
+    /// Controller events, written merged with the notes in time order.
+    public var controls: [ControlEvent]
 
-    public init(name: String, notes: [NoteEvent], lengthTicks: Int) {
+    public init(name: String, notes: [NoteEvent], lengthTicks: Int, program: Int? = nil, controls: [ControlEvent] = []) {
         self.name = name
         self.notes = notes.sorted { ($0.start, $0.pitch) < ($1.start, $1.pitch) }
         self.lengthTicks = lengthTicks
+        self.program = program
+        self.controls = controls
     }
 
     public var bars: Double { Double(lengthTicks) / Double(MusicCore.ticksPerBar()) }

@@ -24,6 +24,7 @@ actor ChannelRouter {
         "transport.get_state":        [.accessibility],
         "transport.goto_position":    [.coreMIDI, .cgEvent],
         "transport.set_cycle_range":  [.accessibility],
+        "transport.cycle_to_regions": [.accessibility],
 
         // Track state reading
         "track.get_tracks":           [.accessibility],
@@ -130,6 +131,8 @@ actor ChannelRouter {
         "region.loop":                [.accessibility, .cgEvent],
         "region.set_loop":            [.accessibility],
         "region.export_selected_midi": [.accessibility],
+        "region.move_selected_to_track": [.accessibility],
+        "region.paste_on_track":      [.accessibility],
         "region.set_name":            [.accessibility],
         "region.move":                [.accessibility],
         "region.resize":              [.accessibility],

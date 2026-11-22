@@ -104,6 +104,21 @@ enum FilePanelAutomation {
         return true
     }
 
+    /// A real left mouse click at a global screen point. The ONLY synthetic mouse click in this
+    /// server: it exists for the last-resort track selection (AccessibilityChannel.selectTrackVerified),
+    /// aimed at the track number column of an AX-located track header. Callers must ensureFrontmost() first.
+    static func clickGlobal(at point: CGPoint) async -> Bool {
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else {
+            return false
+        }
+        down.post(tap: .cghidEventTap)
+        guard await pause(ms: 50) else { return false }
+        up.post(tap: .cghidEventTap)
+        return true
+    }
+
     /// Press Escape in Logic Pro (closes stray menus / popups after a failed step).
     static func pressEscape() async {
         guard let pid = ProcessUtils.logicProPID() else { return }
@@ -117,7 +132,7 @@ enum FilePanelAutomation {
     static func waitForPanel(timeoutMs: Int = 5_000) async -> Bool {
         var waited = 0
         while waited <= timeoutMs {
-            if AXLogicProElements.filePanel() != nil { return true }
+            if AXLogicProElements.strictFilePanel() != nil { return true }
             guard await pause(ms: 100) else { return false }
             waited += 100
         }
@@ -128,7 +143,7 @@ enum FilePanelAutomation {
     static func waitForPanelToClose(timeoutMs: Int = 5_000) async -> Bool {
         var waited = 0
         while waited <= timeoutMs {
-            if AXLogicProElements.filePanel() == nil { return true }
+            if AXLogicProElements.strictFilePanel() == nil { return true }
             guard await pause(ms: 100) else { return false }
             waited += 100
         }

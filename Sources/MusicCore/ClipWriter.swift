@@ -57,7 +57,9 @@ enum JSONValue: Decodable, Sendable {
 public enum ClipWriter {
 
     /// General MIDI drum names and aliases (lower case, `_` separated).
-    public static let drumNames: [String: Int] = [
+    public static let drumNames: [String: Int] = gmNames
+
+    private static let gmNames: [String: Int] = [
         "kick": 36, "bd": 36,
         "rim": 37, "rimshot": 37, "sidestick": 37,
         "snare": 38, "sd": 38,
@@ -68,6 +70,7 @@ public enum ClipWriter {
         "low_tom": 45, "lt": 45,
         "mid_tom": 47, "mt": 47,
         "high_tom": 50, "ht": 50,
+        "tom": 45, "hat2": 46, "perc": 56,
         "crash": 49,
         "ride": 51,
         "ride_bell": 53,
@@ -78,6 +81,37 @@ public enum ClipWriter {
         "shaker": 70, "sh": 70,
         "clave": 75,
     ]
+
+    /// Ultrabeat init kit (not GM): C#1 kick, D1 snare, D#1 hat 1, E1 hat 2, F1 tom, F#1 claps, G1 perc, G#1 shaker.
+    private static let ultrabeatNames: [String: Int] = {
+        var table: [String: Int] = [:]
+        func add(_ names: [String], _ pitch: Int) { for n in names { table[n] = pitch } }
+        add(["kick", "bd"], 37)
+        add(["snare", "sd"], 38)
+        add(["closed_hat", "ch", "hh", "hat"], 39)
+        add(["open_hat", "oh", "hat2"], 40)
+        add(["low_tom", "mid_tom", "high_tom", "lt", "mt", "ht", "tom"], 41)
+        add(["clap", "cp"], 42)
+        add(["rim", "rimshot", "sidestick", "perc", "cowbell", "clave", "conga_high", "conga_low",
+             "tambourine", "tamb"], 43)
+        add(["shaker", "sh", "pedal_hat", "ph"], 44)
+        return table
+    }()
+
+    /// GM drum names that have no voice in the Ultrabeat init kit.
+    private static let ultrabeatMissing: Set<String> = ["ride", "ride_bell", "crash"]
+
+    /// Names accepted for the `kit` spec key.
+    public static let kitNames = ["gm", "ultrabeat_init"]
+
+    /// Drum name table for a kit ("gm" or "ultrabeat_init"); nil for an unknown kit.
+    public static func drumNames(kit: String) -> [String: Int]? {
+        switch kit {
+        case "gm": return gmNames
+        case "ultrabeat_init": return ultrabeatNames
+        default: return nil
+        }
+    }
 
     private static let barTicks = 1920
     private static let sixteenth = 120
@@ -139,6 +173,15 @@ public enum ClipWriter {
         let transpose = try rangedInt(spec, "transpose", -48...48, prefix: "") ?? 0
         let swing = try rangedDouble(spec, "swing", 0...1, prefix: "") ?? 0
         let humanize = try rangedDouble(spec, "humanize", 0...1, prefix: "") ?? 0
+        var kit = "gm"
+        if let value = get(spec, "kit") {
+            guard case .string(let text) = value,
+                  kitNames.contains(text.trimmingCharacters(in: .whitespaces).lowercased()) else {
+                throw fail("kit must be gm or ultrabeat_init")
+            }
+            kit = text.trimmingCharacters(in: .whitespaces).lowercased()
+        }
+        let program = try rangedInt(spec, "program", 0...127, prefix: "")
         let stepTicks = barTicks / grid
         let patternTicks = patternBars.map { $0 * barTicks }
 
@@ -157,7 +200,7 @@ public enum ClipWriter {
                     throw fail("\(ctx): position is beyond pattern_bars (\(patternBars ?? 0) bars)")
                 }
                 guard let pitchValue = get(o, "pitch") else { throw fail("\(ctx): pitch is required") }
-                let resolved = try resolvePitch(pitchValue, ctx: ctx)
+                let resolved = try resolvePitch(pitchValue, ctx: ctx, kit: kit)
                 let length = try lengthTicks(get(o, "len"), defaultTicks: sixteenth, ctx: ctx)
                 let velocity = try rangedInt(o, "vel", 1...127, prefix: "\(ctx): ") ?? 100
                 events.append(RawNote(
@@ -218,7 +261,7 @@ public enum ClipWriter {
                     guard case .array(let list) = pitchesValue, !list.isEmpty else {
                         throw fail("\(ctx): pitches must be a non-empty array")
                     }
-                    pitches = try list.map { try resolvePitch($0, ctx: ctx).pitch }
+                    pitches = try list.map { try resolvePitch($0, ctx: ctx, kit: kit).pitch }
                     pitches = invert(Array(Set(pitches)).sorted(), times: inversion)
                 } else {
                     throw fail("\(ctx): either chord or pitches is required")
@@ -243,7 +286,7 @@ public enum ClipWriter {
             }
             for key in laneSpecs.keys.sorted() {
                 let ctx = "steps.\(key)"
-                let resolved = try resolveLane(key, ctx: ctx)
+                let resolved = try resolveLane(key, ctx: ctx, kit: kit)
                 var patternText: String
                 var velocity = 100
                 var length: Int?
@@ -405,7 +448,19 @@ public enum ClipWriter {
         guard !merged.isEmpty else {
             throw fail("no notes remain inside the clip (\(bars) bars)")
         }
-        return WrittenClip(clip: Clip(name: name, notes: merged, lengthTicks: lengthTicks), warnings: warnings)
+
+        // Controller lanes (not tiled by pattern_bars: they describe the whole clip).
+        var controls: [ControlEvent] = []
+        if let value = get(spec, "cc") {
+            let built = try buildControls(value, stepTicks: stepTicks, lengthTicks: lengthTicks, channel: channel)
+            controls = built.events
+            if built.dropped > 0 {
+                warnings.append("\(built.dropped) cc point(s) at or after the clip end (\(bars) bars) were dropped")
+            }
+        }
+        return WrittenClip(
+            clip: Clip(name: name, notes: merged, lengthTicks: lengthTicks, program: program, controls: controls),
+            warnings: warnings)
     }
 
     /// Clamp, drop notes outside the clip, truncate, merge exact duplicates, trim same-pitch overlaps.
@@ -458,6 +513,85 @@ public enum ClipWriter {
             }
         }
         return (merged, dropped, truncated, trimmed)
+    }
+
+    // MARK: - Controller lanes
+
+    private static let maxControlLanes = 16
+    private static let maxControlEvents = 20_000
+
+    private static func buildControls(
+        _ value: JSONValue, stepTicks: Int, lengthTicks: Int, channel: Int
+    ) throws -> (events: [ControlEvent], dropped: Int) {
+        guard case .array(let lanes) = value else { throw fail("cc must be an array") }
+        guard lanes.count <= maxControlLanes else {
+            throw fail("cc has \(lanes.count) lanes (max \(maxControlLanes))")
+        }
+        var events: [ControlEvent] = []
+        var dropped = 0
+        for (li, item) in lanes.enumerated() {
+            let ctx = "cc[\(li)]"
+            guard case .object(let o) = item else { throw fail("\(ctx) must be an object") }
+            guard get(o, "cc") != nil else { throw fail("\(ctx): cc (controller number) is required") }
+            guard let controller = try rangedInt(o, "cc", 0...127, prefix: "\(ctx): ") else {
+                throw fail("\(ctx): cc (controller number) is required")
+            }
+            var step = false
+            if let c = get(o, "curve") {
+                guard case .string(let text) = c, ["linear", "step"].contains(text.lowercased()) else {
+                    throw fail("\(ctx): curve must be linear or step")
+                }
+                step = text.lowercased() == "step"
+            }
+            let resolution = try rangedDouble(o, "resolution", 0.25...4, prefix: "\(ctx): ") ?? 0.5
+            let stride = max(1, Int((resolution * Double(sixteenth)).rounded()))
+            guard let pv = get(o, "points"), case .array(let rawPoints) = pv else {
+                throw fail("\(ctx): points is required and must be an array")
+            }
+            guard (2...512).contains(rawPoints.count) else {
+                throw fail("\(ctx): points must have between 2 and 512 entries (got \(rawPoints.count))")
+            }
+            var points: [(tick: Int, value: Int, index: Int)] = []
+            for (pi, raw) in rawPoints.enumerated() {
+                let pctx = "\(ctx).points[\(pi)]"
+                guard case .object(let po) = raw else { throw fail("\(pctx) must be an object") }
+                let tick = try position(po, ctx: pctx, stepTicks: stepTicks)
+                guard get(po, "value") != nil, let v = try rangedInt(po, "value", 0...127, prefix: "\(pctx): ") else {
+                    throw fail("\(pctx): value is required (0-127)")
+                }
+                points.append((tick, v, pi))
+            }
+            points.sort { ($0.tick, $0.index) < ($1.tick, $1.index) }
+
+            var lane: [ControlEvent] = []
+            var previous: Int?
+            func emit(_ tick: Int, _ v: Int, force: Bool) {
+                guard tick < lengthTicks else { return }
+                if !force, previous == v { return }
+                lane.append(ControlEvent(tick: tick, controller: controller, value: v, channel: channel))
+                previous = v
+            }
+            for (i, p) in points.enumerated() {
+                if p.tick >= lengthTicks { dropped += 1 }
+                emit(p.tick, p.value, force: true)
+                guard !step, i + 1 < points.count else { continue }
+                let next = points[i + 1]
+                guard next.tick > p.tick else { continue }
+                var t = p.tick + stride
+                while t < next.tick && t < lengthTicks {
+                    let fraction = Double(t - p.tick) / Double(next.tick - p.tick)
+                    let v = Int((Double(p.value) + Double(next.value - p.value) * fraction).rounded())
+                    emit(t, min(127, max(0, v)), force: false)
+                    t += stride
+                }
+            }
+            events += lane
+            guard events.count <= maxControlEvents else {
+                throw fail("too many cc events (more than \(maxControlEvents)); raise resolution or shorten the clip")
+            }
+        }
+        events.sort { ($0.tick, $0.controller, $0.channel) < ($1.tick, $1.controller, $1.channel) }
+        return (events, dropped)
     }
 
     // MARK: - Errors and value helpers
@@ -565,15 +699,23 @@ public enum ClipWriter {
             .replacingOccurrences(of: " ", with: "_")
     }
 
-    private static func resolveText(_ text: String) -> (pitch: Int, isDrum: Bool)? {
+    private static func resolveText(_ text: String, kit: String, ctx: String) throws -> (pitch: Int, isDrum: Bool)? {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         if let n = Int(trimmed) { return (0...127).contains(n) ? (n, false) : nil }
         if let p = NoteName.pitch(trimmed) { return (p, false) }
-        if let d = drumNames[drumKey(trimmed)] { return (d, true) }
+        let key = drumKey(trimmed)
+        if kit == "ultrabeat_init" {
+            if ultrabeatMissing.contains(key) {
+                throw fail("\(ctx): '\(trimmed)' has no voice in the ultrabeat_init kit (no ride or crash); use another lane or kit gm")
+            }
+            if let d = ultrabeatNames[key] { return (d, true) }
+            return nil
+        }
+        if let d = gmNames[key] { return (d, true) }
         return nil
     }
 
-    private static func resolvePitch(_ value: JSONValue, ctx: String) throws -> (pitch: Int, isDrum: Bool) {
+    private static func resolvePitch(_ value: JSONValue, ctx: String, kit: String) throws -> (pitch: Int, isDrum: Bool) {
         switch value {
         case .number(let d):
             guard d == d.rounded(), (0...127).contains(d) else {
@@ -581,15 +723,15 @@ public enum ClipWriter {
             }
             return (Int(d), false)
         case .string(let s):
-            guard let r = resolveText(s) else { throw fail("\(ctx): unknown pitch '\(s)'") }
+            guard let r = try resolveText(s, kit: kit, ctx: ctx) else { throw fail("\(ctx): unknown pitch '\(s)'") }
             return r
         default:
             throw fail("\(ctx): pitch must be a MIDI number, a note name or a drum name")
         }
     }
 
-    private static func resolveLane(_ key: String, ctx: String) throws -> (pitch: Int, isDrum: Bool) {
-        guard let r = resolveText(key) else {
+    private static func resolveLane(_ key: String, ctx: String, kit: String) throws -> (pitch: Int, isDrum: Bool) {
+        guard let r = try resolveText(key, kit: kit, ctx: ctx) else {
             throw fail("\(ctx): unknown lane '\(key)' (use a drum name, a note name or a MIDI number)")
         }
         return r

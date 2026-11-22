@@ -17,9 +17,13 @@ struct MixerDispatcher {
             set_master_volume -> { value: Float }; \
             toggle_eq -> { track: Int }; \
             reset_strip -> { track: Int }; \
-            insert_plugin -> { track?: Int (omit = currently selected track, recommended), slot: Int (0 or "instrument" = instrument slot, 1+ = audio effect slot), \
-            name: String, close_window?: Bool (default true) } (drives the Inspector channel strip via \
-            Accessibility; returns undo_label so you can verify and undo); \
+            insert_plugin -> { track?: Int (0-based; omit = currently selected track), slot: Int (0 or "instrument" = instrument slot, 1+ = audio effect slot), \
+            name: String, result_index?: Int (default 1: how many times Down is pressed in the menu search results), \
+            variant_index?: Int (default 1: entry of the submenu, 1 = first, e.g. Stereo), close_window?: Bool (default true) }. \
+            The slot menu is driven with the keyboard (type the name in the menu search field, Down, Right, Return) and the \
+            insert is confirmed by the new plug-in window. `track` is selected AND read back through Accessibility first: \
+            if the track cannot be selected the command refuses to act (nothing is changed). The message carries a step trace; \
+            the result returns undo_label; \
             bypass_plugin -> { track: Int, slot: Int, bypassed: Bool }
             """,
         inputSchema: .object([
@@ -121,6 +125,12 @@ struct MixerDispatcher {
             let slot = params["slot"]?.intValue ?? 0
             let name = params["name"]?.stringValue ?? params["plugin_name"]?.stringValue ?? ""
             var insertParams = ["track_index": String(track), "plugin_name": name, "slot": String(slot)]
+            if let resultIndex = params["result_index"]?.intValue {
+                insertParams["result_index"] = String(resultIndex)
+            }
+            if let variantIndex = params["variant_index"]?.intValue {
+                insertParams["variant_index"] = String(variantIndex)
+            }
             if let closeWindow = params["close_window"]?.boolValue {
                 insertParams["close_window"] = closeWindow ? "true" : "false"
             }

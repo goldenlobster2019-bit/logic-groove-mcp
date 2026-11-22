@@ -8,11 +8,13 @@ struct TransportDispatcher {
             Control Logic Pro transport. \
             Commands: play, stop, record, pause, rewind, fast_forward, \
             toggle_cycle, toggle_metronome, set_tempo, goto_position, \
-            set_cycle_range, toggle_count_in. \
+            set_cycle_range, cycle_to_regions, toggle_count_in. \
             Params by command: \
             set_tempo -> { tempo: Float } (20.0-999.0); \
             goto_position -> { bar: Int } or { time: "HH:MM:SS:FF" }; \
-            set_cycle_range -> { start: Int, end: Int } (bar numbers); \
+            set_cycle_range -> not implemented, returns an error that points to cycle_to_regions; \
+            cycle_to_regions -> {} (Edit > Select > All, then Navigate > Set Rounded Locators by Selection and \
+            Enable Cycle: the cycle covers all regions; result is unverified, the message carries a step trace); \
             Others -> {} (no params)
             """,
         inputSchema: .object([
@@ -122,6 +124,10 @@ struct TransportDispatcher {
             )
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
+        case "cycle_to_regions":
+            let result = await router.route(operation: "transport.cycle_to_regions")
+            return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
+
         case "set_cycle_range":
             let start: Int
             let end: Int
@@ -146,7 +152,7 @@ struct TransportDispatcher {
 
         default:
             return CallTool.Result(
-                content: [.text("Unknown transport command: \(command). Available: play, stop, record, pause, rewind, fast_forward, toggle_cycle, toggle_metronome, set_tempo, goto_position, set_cycle_range, toggle_count_in")],
+                content: [.text("Unknown transport command: \(command). Available: play, stop, record, pause, rewind, fast_forward, toggle_cycle, toggle_metronome, set_tempo, goto_position, set_cycle_range, cycle_to_regions, toggle_count_in")],
                 isError: true
             )
         }

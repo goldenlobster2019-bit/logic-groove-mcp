@@ -45,7 +45,9 @@ extension AccessibilityChannel {
 
         let tracksBefore = AXLogicProElements.trackHeaderCount()
         let undoBefore = AXLogicProElements.undoMenuTitle()
-        if let existing = AXLogicProElements.filePanelSummary() {
+        // Strict check: a plug-in window (an AXDialog) must not block the import.
+        if let existingPanel = AXLogicProElements.importPanel() {
+            let existing = AXLogicProElements.panelSummary(of: existingPanel)
             return .error("A file panel is already open (\(existing)); close it and retry. Nothing was done.")
         }
         guard await FilePanelAutomation.ensureFrontmost() else {
@@ -256,12 +258,100 @@ extension AccessibilityChannel {
         return best?.path
     }
 
+    // MARK: - Verified track selection
+
+    /// Select a track (0-based) and read the selection back through Accessibility. Returns ok only
+    /// when `AXLogicProElements.selectedTrackIndex()` equals `index`. Attempts, in order, each followed
+    /// by a 200 ms wait and a re-read: (1) AXPress on the header, (2) AXSelected = true, (3) Up/Down
+    /// arrow keys (only when nothing but the project window is focused), (4) a real mouse click on the
+    /// track number column of the header.
+    ///
+    /// This is the ONLY place in the server where a synthetic mouse click is allowed (last resort).
+    func selectTrackVerified(index: Int) async -> (ok: Bool, trace: [String]) {
+        var trace: [String] = []
+        let count = AXLogicProElements.trackHeaderCount()
+        guard index >= 0, index < count else {
+            trace.append("track \(index) out of range (\(count) track headers visible)")
+            return (false, trace)
+        }
+        var current = AXLogicProElements.selectedTrackIndex()
+        if current == index {
+            trace.append("track \(index) already selected")
+            return (true, trace)
+        }
+        trace.append("select track \(index): selected now \(current.map(String.init) ?? "unknown")")
+
+        func recheck(_ label: String) async -> Bool? {
+            guard await FilePanelAutomation.pause(ms: 200) else { return nil }
+            current = AXLogicProElements.selectedTrackIndex()
+            let nowText = current.map(String.init) ?? "unknown"
+            trace.append("\(label) -> selected \(nowText)")
+            return current == index
+        }
+
+        // 1. The existing AX way.
+        let pressed = selectTrack(params: ["index": String(index)])
+        guard let first = await recheck("AXPress \(pressed.isSuccess ? "ok" : "failed")") else {
+            return (false, trace + ["cancelled"])
+        }
+        if first { return (true, trace) }
+
+        // 2. AXSelected on the header.
+        let attribute = AXLogicProElements.setTrackHeaderSelected(index: index)
+        guard let second = await recheck(attribute) else { return (false, trace + ["cancelled"]) }
+        if second { return (true, trace) }
+
+        // 3. Arrow keys, relative to the known selection.
+        if let known = current, let pid = ProcessUtils.logicProPID() {
+            if await FilePanelAutomation.ensureFrontmost() {
+                if let reason = AXLogicProElements.arrowKeysUnsafeReason() {
+                    trace.append("arrow keys skipped: \(reason)")
+                } else {
+                    let delta = index - known
+                    let keyCode: CGKeyCode = delta > 0 ? 125 : 126 // Down / Up
+                    for _ in 0..<abs(delta) {
+                        _ = FilePanelAutomation.postKey(keyCode, flags: [], pid: pid)
+                        guard await FilePanelAutomation.pause(ms: 60) else { return (false, trace + ["cancelled"]) }
+                    }
+                    guard let third = await recheck("arrow \(delta > 0 ? "Down" : "Up") x\(abs(delta))") else {
+                        return (false, trace + ["cancelled"])
+                    }
+                    if third { return (true, trace) }
+                }
+            } else {
+                trace.append("arrow keys skipped: Logic Pro could not be brought to the front")
+            }
+        } else {
+            trace.append("arrow keys skipped: current selection unknown or Logic Pro not running")
+        }
+
+        // 4. Last resort: a real click on the track number column.
+        if AXLogicProElements.importPanel() != nil {
+            trace.append("click skipped: a file panel is open")
+        } else if let point = AXLogicProElements.trackHeaderClickPoint(index: index) {
+            if await FilePanelAutomation.ensureFrontmost() {
+                let clicked = await FilePanelAutomation.clickGlobal(at: point)
+                guard let fourth = await recheck("click at (\(Int(point.x)),\(Int(point.y))) \(clicked ? "posted" : "failed")") else {
+                    return (false, trace + ["cancelled"])
+                }
+                if fourth { return (true, trace) }
+            } else {
+                trace.append("click skipped: Logic Pro could not be brought to the front")
+            }
+        } else {
+            trace.append("click skipped: no usable header frame inside the project window")
+        }
+        trace.append("track \(index) could not be selected")
+        return (false, trace)
+    }
+
     // MARK: - Plugin insertion
 
+    /// Insert a plug-in through the Inspector slot menu: press the slot, type the name into the menu's
+    /// search field, Down / Right / Return, then confirm by the new plug-in window. Never types or
+    /// presses Return unless the focused element was confirmed through AX; never acts when the target
+    /// track selection could not be read back.
     func insertPlugin(params: [String: String]) async -> ChannelResult {
-        // track_index -1 (or absent) = use the track that is already selected. Verified on
-        // Logic Pro 11: AXPress on a track header does not reliably change the selection,
-        // so the safest flow is "select the track/region first, then insert".
         let trackIndex = Int(params["track_index"] ?? "-1") ?? -1
         let pluginName = (params["plugin_name"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !pluginName.isEmpty else {
@@ -277,112 +367,142 @@ extension AccessibilityChannel {
             return .error("Invalid 'slot': use \"instrument\"/0 for the instrument slot or 1, 2, ... for audio effect slots")
         }
         let closeWindow = (params["close_window"] ?? "true").lowercased() != "false"
+        guard let resultIndex = Int(params["result_index"] ?? "1"), (1...50).contains(resultIndex) else {
+            return .error("'result_index' must be between 1 and 50")
+        }
+        guard let variantIndex = Int(params["variant_index"] ?? "1"), (1...20).contains(variantIndex) else {
+            return .error("'variant_index' must be between 1 and 20")
+        }
+        let slotLabel = slot == 0 ? "instrument slot" : "audio effect slot \(slot)"
 
+        var trace: [String] = []
+        func traceText() -> String { trace.joined(separator: "; ") }
+
+        // 1. The target track must be selected AND read back; otherwise do nothing at all.
         if trackIndex >= 0 {
-            let selected = selectTrack(params: ["index": String(trackIndex)])
-            if case .error = selected {
-                return selected
+            let selection = await selectTrackVerified(index: trackIndex)
+            trace.append(contentsOf: selection.trace)
+            guard selection.ok else {
+                return .error("Could not select track \(trackIndex) (read back through Accessibility), so nothing was changed. Trace: \(traceText())")
             }
             guard await FilePanelAutomation.pause(ms: 300) else { return .error("Cancelled") }
+        } else {
+            guard AXLogicProElements.selectedTrackIndex() != nil else {
+                return .error("No track is selected (or the selection cannot be read); pass 'track'. Nothing was changed.")
+            }
+            trace.append("selected track \(AXLogicProElements.selectedTrackSummary())")
         }
 
-        // Make sure the Inspector (and with it the channel strip) is visible.
-        var strip = AXLogicProElements.inspectorChannelStrip()
-        if strip == nil {
+        // 2. Locate the slot (Inspector must be visible).
+        if !AXLogicProElements.hasInspectorChannelStrip() {
             if case .pressed = AXLogicProElements.pressMenu(["View", "Show Inspector"]) {
+                trace.append("opened the Inspector through View > Show Inspector")
                 _ = await FilePanelAutomation.pause(ms: 500)
-                strip = AXLogicProElements.inspectorChannelStrip()
             }
         }
-        guard let channelStrip = strip else {
+        guard AXLogicProElements.hasInspectorChannelStrip() else {
             let entries = AXLogicProElements.menuEntryTitles(path: ["View"])
-            return .error("Cannot find the Inspector channel strip (AXLayoutArea described 'Mixer'). Open the Inspector (I). View menu entries: \(entries.joined(separator: ", "))")
+            return .error("Cannot find the Inspector channel strip (AXLayoutArea described 'Mixer'). Open the Inspector (I). View menu entries: \(entries.joined(separator: ", ")). Trace: \(traceText())")
         }
 
-        // Locate the slot control.
-        let candidates = AXLogicProElements.slotCandidates(in: channelStrip)
-        let target: AXUIElement? = AXLogicProElements.pluginSlotButton(slot: slot, candidates: candidates)
-        guard let slotElement = target else {
-            let kind = slot == 0 ? "instrument slot" : "audio effect slot \(slot)"
-            return .error("Cannot find the \(kind) in the Inspector channel strip. Candidates seen (\(candidates.count)): \(AXLogicProElements.diagnostic(of: candidates))")
+        guard await FilePanelAutomation.ensureFrontmost() else {
+            return .error("Could not bring Logic Pro to the front. Trace: \(traceText())")
+        }
+        func fail(_ reason: String) async -> ChannelResult {
+            await FilePanelAutomation.pressEscape()
+            trace.append("pressed Escape")
+            return .error("\(reason). Trace: \(traceText())")
         }
 
-        let windowsBefore = AXLogicProElements.allWindows()
+        // 3. Press the slot and wait for the menu's search field to take the focus.
+        let titlesBefore = AXLogicProElements.windowTitles()
+        let focusBefore = AXLogicProElements.focusedFieldSummary()
+        let tokenBefore = AXLogicProElements.focusedElementToken()
+        trace.append("windows before: \(titlesBefore.count); focus before: \(focusBefore ?? "none")")
 
-        // Open the slot menu.
-        var opened = AXHelpers.performAction(slotElement, kAXShowMenuAction)
-        if !opened {
-            opened = AXHelpers.performAction(slotElement, kAXPressAction)
-        }
-        guard opened else {
-            return .error("Could not open the slot menu (neither AXShowMenu nor AXPress worked on \(AXLogicProElements.describe(slotElement)))")
-        }
-
-        var menu: AXUIElement?
-        for _ in 0..<20 {
-            if let found = AXLogicProElements.openedMenu(near: slotElement) {
-                menu = found
-                break
+        var foundField: String?
+        var forcePress = false
+        for attempt in 0..<2 {
+            let press = AXLogicProElements.pressPluginSlot(slot: slot, forcePress: forcePress)
+            guard press.found else {
+                return await fail("Cannot find the \(slotLabel) in the Inspector channel strip (candidates seen: \(press.diagnostic))")
             }
+            trace.append(press.traceText)
+            let limitMs = (attempt == 0 && press.method == "AXShowMenu") ? 1_500 : 3_000
+            var waited = 0
+            while waited <= limitMs, foundField == nil {
+                guard await FilePanelAutomation.pause(ms: 100) else { return .error("Cancelled") }
+                waited += 100
+                if AXLogicProElements.focusedIsAnyTextField() {
+                    let summary = AXLogicProElements.focusedFieldSummary()
+                    if summary != focusBefore || AXLogicProElements.focusedElementToken() != tokenBefore {
+                        foundField = summary ?? "text field"
+                    }
+                }
+            }
+            if foundField != nil { break }
+            if attempt == 0 && press.method == "AXShowMenu" {
+                trace.append("no search field after AXShowMenu; retrying with AXPress")
+                forcePress = true
+                continue
+            }
+            break
+        }
+        guard let fieldSummary = foundField else {
+            return await fail("The slot menu did not open or has no search field (\(AXLogicProElements.openedMenuSummary()); focus now: \(AXLogicProElements.focusedFieldSummary() ?? "none"))")
+        }
+        trace.append("menu search field focused: \(fieldSummary)")
+
+        // 4. Type the name and read it back.
+        guard await FilePanelAutomation.ensureFrontmost() else { return await fail("Could not bring Logic Pro to the front") }
+        guard await FilePanelAutomation.typeTextGlobal(pluginName) else { return await fail("Failed to type the plug-in name") }
+        guard await FilePanelAutomation.pause(ms: 500) else { return .error("Cancelled") }
+        let typed = (AXLogicProElements.focusedFieldValue() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        trace.append("typed '\(pluginName)', field holds '\(String(typed.prefix(60)))'")
+        guard typed.lowercased() == pluginName.lowercased() else {
+            return await fail("The search field does not hold the typed name ('\(String(typed.prefix(60)))'); nothing was selected")
+        }
+
+        // 5. Down (result_index times), Right (submenu), Down (variant_index - 1 times), Return.
+        guard await FilePanelAutomation.ensureFrontmost() else { return await fail("Could not bring Logic Pro to the front") }
+        for _ in 0..<resultIndex {
+            guard FilePanelAutomation.postKeyGlobal(125, flags: []) else { return await fail("Failed to post Down") }
+            guard await FilePanelAutomation.pause(ms: 60) else { return .error("Cancelled") }
+        }
+        guard await FilePanelAutomation.pause(ms: 150) else { return .error("Cancelled") }
+        guard FilePanelAutomation.postKeyGlobal(124, flags: []) else { return await fail("Failed to post Right") }
+        guard await FilePanelAutomation.pause(ms: 250) else { return .error("Cancelled") }
+        for _ in 0..<(variantIndex - 1) {
+            guard FilePanelAutomation.postKeyGlobal(125, flags: []) else { return await fail("Failed to post Down") }
+            guard await FilePanelAutomation.pause(ms: 60) else { return .error("Cancelled") }
+        }
+        guard FilePanelAutomation.postKeyGlobal(36, flags: []) else { return await fail("Failed to post Return") }
+        trace.append("keys: Down x\(resultIndex), Right, Down x\(variantIndex - 1), Return")
+
+        // 6. Confirm by the new plug-in window.
+        var newTitles: [String] = []
+        var waited = 0
+        while waited <= 5_000 {
             guard await FilePanelAutomation.pause(ms: 100) else { return .error("Cancelled") }
+            waited += 100
+            newTitles = AXLogicProElements.newWindowTitles(since: titlesBefore)
+            if !newTitles.isEmpty { break }
         }
-        guard let firstMenu = menu else {
-            await FilePanelAutomation.pressEscape()
-            return .error("No plugin menu appeared after opening the slot. Candidates seen: \(AXLogicProElements.diagnostic(of: candidates))")
+        guard !newTitles.isEmpty else {
+            return await fail("Plug-in '\(pluginName)' was not confirmed (no new plug-in window within 5 seconds)")
         }
+        let windowTitle = newTitles.joined(separator: " | ")
+        trace.append("new window: '\(windowTitle)' after \(waited) ms")
 
-        // Use the menu's search field when Logic offers one.
-        if let search = AXLogicProElements.menuSearchField(in: firstMenu) {
-            if AXHelpers.setAttribute(search, kAXValueAttribute, pluginName as CFTypeRef) {
-                guard await FilePanelAutomation.pause(ms: 300) else { return .error("Cancelled") }
-            }
-        }
-        let activeMenu = AXLogicProElements.openedMenu(near: slotElement) ?? firstMenu
-
-        guard let chain = AXLogicProElements.findMenuItemChain(in: activeMenu, containing: pluginName, maxDepth: 4) else {
-            let seen = AXLogicProElements.menuEntries(of: activeMenu)
-            await FilePanelAutomation.pressEscape()
-            return .error("No menu item containing '\(pluginName)' in the plugin menu. Menu entries seen (\(seen.count)): \(AXLogicProElements.diagnostic(of: seen))")
-        }
-        var fullChain = chain
-        if let last = chain.last {
-            fullChain.append(contentsOf: AXLogicProElements.leafChain(under: last))
-        }
-
-        // Open each submenu in turn, then press the leaf.
-        var pressedTitles: [String] = []
-        for (offset, item) in fullChain.enumerated() {
-            let isLast = offset == fullChain.count - 1
-            let title = AXHelpers.getTitle(item) ?? "?"
-            let ok = AXHelpers.performAction(item, kAXPressAction)
-            if isLast {
-                guard ok else {
-                    await FilePanelAutomation.pressEscape()
-                    return .error("Failed to press menu item '\(title)'")
-                }
-            }
-            pressedTitles.append(title)
-            if !isLast {
-                _ = await FilePanelAutomation.pause(ms: 150)
-            }
-        }
-
-        // Logic opens the plugin editor automatically; close anything new.
-        _ = await FilePanelAutomation.pause(ms: 700)
-        var closed = 0
+        // 7. Close only the new window(s).
         if closeWindow {
-            for window in AXLogicProElements.allWindows() {
-                let existed = windowsBefore.contains(where: { CFEqual($0, window) })
-                if existed { continue }
-                if let button = AXLogicProElements.closeButton(of: window),
-                   AXHelpers.performAction(button, kAXPressAction) {
-                    closed += 1
-                }
-            }
+            _ = await FilePanelAutomation.pause(ms: 300)
+            let closed = AXLogicProElements.closeNewWindows(since: titlesBefore)
+            trace.append("closed \(closed) new window(s) through their close button")
         }
 
-        let slotLabel = slot == 0 ? "instrument slot" : "audio effect slot \(slot)"
-        return .unverified("Pressed \(pressedTitles.joined(separator: " > ")) in \(slotLabel) of track \(trackIndex); closed \(closed) new window(s) — verify the plugin loaded")
+        let trackText = trackIndex >= 0 ? String(trackIndex) : AXLogicProElements.selectedTrackSummary()
+        return .success("Inserted \(pluginName) in \(slotLabel) of track \(trackText) (window '\(windowTitle)'). Trace: \(traceText())")
     }
 
     // MARK: - Region loop
