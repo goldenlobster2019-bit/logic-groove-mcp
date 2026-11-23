@@ -33,7 +33,7 @@ struct SystemDispatcher {
         name: "logic_system",
         description: """
             Diagnostics and help for the Logic Groove MCP server. \
-            Commands: health, permissions, refresh_cache, debug_windows, debug_panel, debug_strip, debug_header, debug_focus, state, help. \
+            Commands: health, permissions, refresh_cache, debug_windows, debug_panel, debug_strip, debug_header, debug_plugin, debug_focus, state, help. \
             Params by command: \
             help -> { category: String } (returns full param docs for a dispatcher); \
             refresh_cache -> {} (force AX re-poll); \
@@ -45,6 +45,10 @@ struct SystemDispatcher {
             plug-in slot candidates with frames and the AX subtree); \
             debug_header -> { track: Int (0-based), max_lines?: Int (50-1500, default 300) } (AX subtree dump of that track header \
             with its mute / solo controls and their values; use it to diagnose logic_tracks mute / solo / rename); \
+            debug_plugin -> { track?: Int, plugin?: String or slot?: Int (0 = instrument, n = n-th effect), \
+            view?: "controls" (default) | "editor", max_lines?: Int (50-1500, default 400) } (opens the plug-in window if \
+            needed, switches to that view, returns the AX subtree dump, restores the view and closes the window when it \
+            opened it; use it to see the real structure of the Controls view); \
             debug_focus -> {} (focused element and focused window); \
             Others -> {}
             """,
@@ -128,6 +132,19 @@ struct SystemDispatcher {
             let maxLines = min(max(InputValidation.looseInt(params["max_lines"]) ?? 300, 50), 1_500)
             return CallTool.Result(content: [.text(AXLogicProElements.debugHeaderDump(index: track, maxLines: maxLines))], isError: false)
 
+        case "debug_plugin":
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["track_index"]) ?? -1
+            let maxLines = min(max(InputValidation.looseInt(params["max_lines"]) ?? 400, 50), 1_500)
+            var pluginParams = ["track_index": String(track), "max_lines": String(maxLines)]
+            if let plugin = params["plugin"]?.stringValue, !plugin.isEmpty {
+                pluginParams["plugin"] = plugin
+            } else if let slot = params["slot"]?.stringValue ?? InputValidation.looseInt(params["slot"]).map({ String($0) }) {
+                pluginParams["slot"] = slot
+            }
+            if let view = params["view"]?.stringValue { pluginParams["view"] = view }
+            let result = await router.route(operation: "plugin.debug", params: pluginParams)
+            return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
+
         case "debug_focus":
             let focus = AXLogicProElements.focusedFieldSummary() ?? "none"
             let text = "focused element: \(focus)\nfocused window: \(AXLogicProElements.focusedWindowSummary())"
@@ -162,7 +179,7 @@ struct SystemDispatcher {
 
         default:
             return CallTool.Result(
-                content: [.text("Unknown system command: \(command). Available: health, permissions, refresh_cache, debug_windows, debug_panel, debug_strip, debug_header, debug_focus, state, help")],
+                content: [.text("Unknown system command: \(command). Available: health, permissions, refresh_cache, debug_windows, debug_panel, debug_strip, debug_header, debug_plugin, debug_focus, state, help")],
                 isError: true
             )
         }
@@ -175,8 +192,8 @@ struct SystemDispatcher {
         case "transport":
             return """
                 logic_transport commands:
-                  play              -> {} — Start playback
-                  stop              -> {} — Stop playback
+                  play              -> {} — Start playback (AXPress on the control bar Play checkbox)
+                  stop              -> {} — Stop playback (AXPress on the Stop button)
                   record            -> {} — Start recording
                   pause             -> {} — Pause playback
                   rewind            -> {} — Rewind
@@ -197,8 +214,9 @@ struct SystemDispatcher {
             return """
                 logic_tracks commands:
                   select            -> { index: Int } or { name: String }
-                  create_audio      -> {} — New audio track
-                  create_instrument -> {} — New software instrument track
+                  create_audio      -> {} — New audio track (the project window is raised, verified by the
+                                       track header count going up by one)
+                  create_instrument -> {} — New software instrument track (same verification)
                   create_drummer    -> {} — New Drummer track
                   create_external_midi -> {} — New external MIDI track
                   delete            -> { index: Int } (REQUIRED) — selects the track with read-back,
@@ -252,6 +270,21 @@ struct SystemDispatcher {
                   bypass_plugin     -> { track?: Int, plugin?: String (name substring) or slot?: Int
                                        (0 = instrument, n = n-th effect), bypassed: Bool } — pressed only
                                        when the state differs, read back
+
+                Plug-in window commands (common params: track?: Int, plugin?: String (name substring) or
+                slot?: Int (0 = instrument, n = n-th effect; default instrument), keep_open?: Bool). Each
+                opens the window if needed and closes it only if it opened it:
+                  open_plugin       -> {} — open the plug-in window (left open)
+                  close_plugin      -> {} — close it
+                  plugin_setting    -> {} — current setting name (Logic's settings menu)
+                  set_plugin_setting -> { setting: "Dub Delays/Dub Echo" } — path with "/" for submenus;
+                                       verified by the pop-up value; on a miss the error lists the items
+                  plugin_settings_menu -> { path?: String } — list the items of the settings menu (or of a submenu)
+                  plugin_popups     -> {} — settings pop-up and the plug-in specific pop-ups (index | value)
+                  set_plugin_popup  -> { index: Int, value: String } — e.g. Drum Synth: 0 = category, 1 = sound module
+                  plugin_params     -> { filter?: String } — Controls view: index | label | value | raw (min..max) | flags
+                  set_plugin_param  -> { param?: String or index?: Int, value: Number or String, raw?: Bool }
+                                       slider AXValue, then text field, then AXIncrement/AXDecrement; read back
 
                 Read state via resource: logic://mixer
                 """
@@ -400,23 +433,24 @@ struct SystemDispatcher {
             return """
                 logic_sounds commands (u-he synths, default plugin "Diva"; param plugin?: String):
                   folders           -> {} — Existing preset roots, total, preset folders with counts
-                  presets           -> { query?, folder?, category?, limit? (1-200, default 40), meta? (default true) }
-                                       Browse presets (name, folder, categories, features, character, author;
-                                       `program` when the preset is in the bank)
-                  bank              -> {} — The installed MIDI Programs bank (program, name, file) and
-                                       whether Logic was started after the last bank change
+                  presets           -> { query?, folder?, category?, limit? (1-200, default 40), format? ("text" default | "json") }
+                                       COMPACT text: first line shown/total, then `name | folder | categories | program N`
+                  preset_info       -> { preset: String } — JSON with description, usage (how it is meant to be
+                                       played), author, categories, features, character, program
+                  bank              -> { format? } — installed MIDI Programs bank (`program  name` lines)
                   bank_install      -> { presets: [String] (1-128 names, "folder/name" or absolute paths),
                                        mode?: "replace" (default) | "append" } — all references are resolved
                                        first (any failure writes nothing). QUIT AND REOPEN LOGIC afterwards:
                                        the synth reads MIDI Programs only when the host starts.
-                  set_preset        -> { track?: Int (0-based; omit = selected), preset?: String or
-                                       program?: Int (0-127), channel?: Int (1-16) } — selects the track with
-                                       read-back, requires the instrument to be the plug-in, sends Bank
-                                       Select CC 0 = 0 and the Program Change, then reads the track name.
+                  set_preset        -> { track?, preset? | program? } — sends NO MIDI (a live Program Change does not
+                                       reach the plug-in); returns { ok: false, program, message } telling you to put
+                                       `program: N` on the clip written with logic_compose write
+                  verify            -> { track?: Int, preset?: String } — { track, track_name, bank_program, matches }
+                                       (a loaded bank program shows in the track name: "0/29 029 HS Stabz")
 
-                Workflow: folders / presets, bank_install once, restart Logic, then per track
-                logic_mixer insert_plugin { slot: "instrument", name: "Diva" } and set_preset { track, preset }.
-                The bank folder is /Library/Audio/Presets/u-he/<plugin>/MIDI Programs and must be writable.
+                Workflow: folders / presets / preset_info, bank_install once, restart Logic, then per track
+                logic_mixer insert_plugin { slot: "instrument", name: "Diva" }, logic_compose write { program: N },
+                logic_sounds verify.
                 """
 
         case "project":
@@ -427,7 +461,10 @@ struct SystemDispatcher {
                   save              -> {} — Save current project
                   save_as           -> { path: String } — Save to new path
                   close             -> {} — Close project
-                  bounce            -> {} — Open bounce dialog
+                  bounce            -> { path?: String (inside your home folder; default
+                                       ~/Music/LogicGrooveMCP/Bounces/bounce-<timestamp>.wav), start_bar?, end_bar? }
+                                       — File > Bounce > Project or Section with step trace (best effort, the
+                                       range is NOT applied yet: set the cycle / selection first)
                   launch            -> {} — Launch Logic Pro
                   quit              -> {} — Quit Logic Pro
 
@@ -450,6 +487,8 @@ struct SystemDispatcher {
                                        slot candidates with frames, subtree
                   debug_header      -> { track: Int, max_lines?: Int } — AX subtree of one track header with
                                        its mute / solo controls and values
+                  debug_plugin      -> { track?, plugin? | slot?, view? ("controls" default | "editor"), max_lines? }
+                                       — AX dump of a plug-in window in that view
                   debug_focus       -> {} — Focused element and focused window
                   help              -> { category: String } — Param docs per category
 
@@ -472,7 +511,7 @@ struct SystemDispatcher {
                   logic_navigate   — Navigation + views (markers, zoom, toggle views...)
                   logic_project    — Project lifecycle (open, save, bounce...)
                   logic_compose    — Generate/analyze/import MIDI (house, deep house, dub techno)
-                  logic_sounds     — Diva (u-he) presets through the MIDI Programs bank
+                  logic_sounds     — Diva (u-he) presets: browse, MIDI Programs bank, verify
                   logic_system     — Diagnostics + help
 
                 Resources (reads — zero tool cost):

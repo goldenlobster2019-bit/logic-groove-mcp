@@ -179,6 +179,16 @@ extension AccessibilityChannel {
         if let tempoNote = await FilePanelAutomation.handleTempoDialog() {
             trace.append(tempoNote)
         }
+        // Logic may ask to download missing content for the patch picked from the file's Program Change.
+        var promptWaited = 0
+        while promptWaited <= 1_500 {
+            if AXLogicProElements.dismissDownloadPrompt() != nil {
+                trace.append(AXLogicProElements.downloadPromptTraceText)
+                break
+            }
+            guard await FilePanelAutomation.pause(ms: 100) else { break }
+            promptWaited += 100
+        }
 
         // Verify by track count only. The Undo title is read for the message but is not a
         // reliable signal (it flips between "Can't Undo" and "Undo" without any import).
@@ -316,6 +326,10 @@ extension AccessibilityChannel {
     /// This is the ONLY place in the server where a synthetic mouse click is allowed (last resort).
     func selectTrackVerified(index: Int) async -> (ok: Bool, trace: [String]) {
         var trace: [String] = []
+        if AXLogicProElements.dismissDownloadPrompt() != nil {
+            trace.append(AXLogicProElements.downloadPromptTraceText)
+            _ = await FilePanelAutomation.pause(ms: 300)
+        }
         let count = AXLogicProElements.trackHeaderCount()
         guard index >= 0, index < count else {
             trace.append("track \(index) out of range (\(count) track headers visible)")
@@ -526,7 +540,25 @@ extension AccessibilityChannel {
             if !newTitles.isEmpty { break }
         }
         guard !newTitles.isEmpty else {
-            return await failWithEscape(trace: trace, reason: "Plug-in '\(pluginName)' was not confirmed (no new plug-in window within 5 seconds)")
+            // The window may simply not have been detected: trust the strip structure when it shows the plug-in.
+            var recheck: StripModel?
+            var confirmedByStrip = false
+            var extra = 0
+            while extra <= 1_500 {
+                recheck = AXLogicProElements.stripModel()
+                if let recheck, Self.stripConfirmsInsert(kind: kind, before: before, after: recheck, pluginName: pluginName) {
+                    confirmedByStrip = true
+                    break
+                }
+                guard await FilePanelAutomation.pause(ms: 300) else { return .error("Cancelled") }
+                extra += 300
+            }
+            if confirmedByStrip, let recheck {
+                trace.append("no new plug-in window within 5 seconds, but the strip shows the plug-in")
+                let trackText = trackIndex >= 0 ? String(trackIndex) : AXLogicProElements.selectedTrackSummary()
+                return .success("Inserted \(pluginName) in \(slotLabel) of track \(trackText); the plug-in window did not appear but the channel strip confirms the insert (nothing was closed). chain: \(recheck.chainText). Trace: \(traceText())")
+            }
+            return await failWithEscape(trace: trace, reason: "Plug-in '\(pluginName)' was not confirmed (no new plug-in window within 5 seconds and the strip does not show it; strip now: \(recheck?.chainText ?? "unreadable"))")
         }
         let windowTitle = newTitles.joined(separator: " | ")
         trace.append("new window: '\(windowTitle)' after \(waited) ms")
@@ -547,17 +579,7 @@ extension AccessibilityChannel {
             waited += 300
             after = AXLogicProElements.stripModel()
             if let after {
-                switch kind {
-                case .instrument:
-                    structural = after.instrument.map { ComposeSupport.pluginNameMatches($0.name, pluginName) } ?? false
-                case .newEffect:
-                    structural = after.effects.count == before.effects.count + 1
-                        && (after.effects.last.map { ComposeSupport.pluginNameMatches($0.name, pluginName) } ?? false)
-                case .effect(let n):
-                    structural = after.effects.count == before.effects.count
-                        && after.effects.indices.contains(n - 1)
-                        && ComposeSupport.pluginNameMatches(after.effects[n - 1].name, pluginName)
-                }
+                structural = Self.stripConfirmsInsert(kind: kind, before: before, after: after, pluginName: pluginName)
             }
             if structural { break }
         }
@@ -569,6 +591,21 @@ extension AccessibilityChannel {
 
         let trackText = trackIndex >= 0 ? String(trackIndex) : AXLogicProElements.selectedTrackSummary()
         return .success("Inserted \(pluginName) in \(slotLabel) of track \(trackText) (window '\(windowTitle)'). chain: \(afterChain). Trace: \(traceText())")
+    }
+
+    /// Whether `after` shows `pluginName` in the slot kind that was addressed, compared with `before`.
+    static func stripConfirmsInsert(kind: PluginSlotKind, before: StripModel, after: StripModel, pluginName: String) -> Bool {
+        switch kind {
+        case .instrument:
+            return after.instrument.map { ComposeSupport.pluginNameMatches($0.name, pluginName) } ?? false
+        case .newEffect:
+            return after.effects.count == before.effects.count + 1
+                && (after.effects.last.map { ComposeSupport.pluginNameMatches($0.name, pluginName) } ?? false)
+        case .effect(let n):
+            return after.effects.count == before.effects.count
+                && after.effects.indices.contains(n - 1)
+                && ComposeSupport.pluginNameMatches(after.effects[n - 1].name, pluginName)
+        }
     }
 
     // MARK: - Region loop
@@ -660,20 +697,42 @@ extension AccessibilityChannel {
             return .error("Unsupported track creation operation: \(operation)")
         }
 
+        var trace: [String] = []
+        if AXLogicProElements.dismissDownloadPrompt() != nil {
+            trace.append(AXLogicProElements.downloadPromptTraceText)
+        }
+        if !AXLogicProElements.focusedWindowIsProject() {
+            let raised = AXLogicProElements.raiseProjectWindow()
+            trace.append("project window was not the focused window (\(AXLogicProElements.focusedWindowSummary())); raise \(raised ? "ok" : "failed")")
+            guard await FilePanelAutomation.pause(ms: 250) else { return .error("Cancelled") }
+        }
+        guard await FilePanelAutomation.ensureFrontmost() else {
+            return .error("Could not bring Logic Pro to the front. Nothing was done. Trace: \(trace.joined(separator: "; "))")
+        }
+        let tracksBefore = AXLogicProElements.trackHeaderCount()
         for name in candidates {
             switch AXLogicProElements.pressMenu(["Track", name]) {
             case .pressed(let title):
+                trace.append("pressed Track > \(title)")
                 // Some Logic versions answer with the New Tracks dialog; confirm it.
-                var confirmed = false
                 for _ in 0..<8 {
                     guard await FilePanelAutomation.pause(ms: 100) else { return .error("Cancelled") }
                     if AXLogicProElements.pressNewTracksCreate() {
-                        confirmed = true
+                        trace.append("confirmed the New Tracks dialog")
                         break
                     }
                 }
-                let suffix = confirmed ? " (confirmed the New Tracks dialog)" : ""
-                return .unverified("Pressed Track > \(title)\(suffix) — verify the new track exists")
+                var tracksAfter = AXLogicProElements.trackHeaderCount()
+                var waited = 0
+                while tracksAfter <= tracksBefore && waited < 3_000 {
+                    guard await FilePanelAutomation.pause(ms: 200) else { return .error("Cancelled") }
+                    waited += 200
+                    tracksAfter = AXLogicProElements.trackHeaderCount()
+                }
+                if tracksAfter == tracksBefore + 1 {
+                    return .success("Created a track with Track > \(title) (verified: track headers \(tracksBefore) -> \(tracksAfter)). Trace: \(trace.joined(separator: "; "))")
+                }
+                return .error("Track > \(title) was pressed but the track header count went \(tracksBefore) -> \(tracksAfter) (expected +1). Trace: \(trace.joined(separator: "; "))")
             case .disabled(let title):
                 return .error("Track > \(title) is disabled")
             case .failed(let title):

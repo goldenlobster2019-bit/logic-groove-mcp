@@ -10,7 +10,11 @@ struct ProjectDispatcher {
             Params by command: \
             open -> { path: String }; \
             save_as -> { path: String }; \
-            bounce -> {} (opens bounce dialog); \
+            bounce -> { path?: String (audio file inside your home folder, default ~/Music/LogicGrooveMCP/Bounces/bounce-<timestamp>.wav), \
+            start_bar?: Int, end_bar?: Int } (BEST EFFORT: File > Bounce > Project or Section, Offline, OK, then the save panel; \
+            waits up to 120 s for the file; success only when the file exists, otherwise an error with a full step trace. \
+            start_bar / end_bar are NOT applied yet: set the cycle (logic_transport cycle_to_regions) or a selection first; \
+            use the file to analyse the audio); \
             launch/quit -> {} (app lifecycle); \
             Others -> {}
             """,
@@ -78,7 +82,15 @@ struct ProjectDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "bounce":
-            let result = await router.route(operation: "project.bounce")
+            let path: String
+            switch ComposeSupport.validateBouncePath(params["path"]?.stringValue) {
+            case .success(let value): path = value
+            case .failure(let message): return CallTool.Result(content: [.text(message)], isError: true)
+            }
+            var bounceParams = ["path": path]
+            if let start = InputValidation.looseInt(params["start_bar"]) { bounceParams["start_bar"] = String(start) }
+            if let end = InputValidation.looseInt(params["end_bar"]) { bounceParams["end_bar"] = String(end) }
+            let result = await router.route(operation: "project.bounce", params: bounceParams)
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "launch":

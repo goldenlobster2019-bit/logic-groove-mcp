@@ -33,6 +33,8 @@ struct StripModel: Sendable, Codable, Equatable {
     var hasEmptyInstrumentSlot: Bool
     var hasEmptyEffectSlot: Bool
     var master: StripMaster?
+    /// Sends of the track ("Bus 3"), top to bottom. Never counted as effects.
+    var sends: [String] = []
 
     /// All plug-ins top to bottom: instrument first (when there is one), then the effects.
     var plugins: [StripPlugin] { (instrument.map { [$0] } ?? []) + effects }

@@ -28,4 +28,29 @@ extension AccessibilityChannel {
         let index = AXLogicProElements.selectedTrackIndex().map { String($0) } ?? "?"
         return .success("track \(index) '\(model.trackName)' has instrument '\(instrument.name)'. Trace: \(prep.trace.joined(separator: "; "))")
     }
+
+    /// params: `track_index` (0-based; absent or -1 = the currently selected track). Selects the track with
+    /// read-back and returns a small JSON object { "track": Int, "track_name": String, "trace": [String] }
+    /// with the live name of the track header (after a bank program loaded it reads "0/29 029 HS Stabz").
+    func verifyTrackName(params: [String: String]) async -> ChannelResult {
+        let trackIndex = Int(params["track_index"] ?? "-1") ?? -1
+        let prep = await prepareStrip(trackIndex: trackIndex, requireTrack: true)
+        if let error = prep.error { return .error(error) }
+        guard let index = AXLogicProElements.selectedTrackIndex() else {
+            return .error("The selected track cannot be read. Trace: \(prep.trace.joined(separator: "; "))")
+        }
+        let headerName = AXLogicProElements.trackHeaderName(index: index) ?? ""
+        let stripName = AXLogicProElements.stripModel()?.trackName ?? ""
+        let object: [String: Any] = [
+            "track": index,
+            "track_name": headerName.isEmpty ? stripName : headerName,
+            "strip_name": stripName,
+            "trace": prep.trace,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return .error("Failed to encode the result")
+        }
+        return .success(text)
+    }
 }

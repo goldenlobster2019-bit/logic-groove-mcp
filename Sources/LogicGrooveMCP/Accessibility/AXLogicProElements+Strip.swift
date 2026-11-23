@@ -78,6 +78,12 @@ extension AXLogicProElements {
         let hasMidiPluginButton: Bool
         let emptyInstrumentButton: AXUIElement?
         let emptyEffectButton: AXUIElement?
+        let sends: [String]
+    }
+
+    /// Whether a slot label is a send ("Bus 3").
+    private static func isSendLabel(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("bus ")
     }
 
     private static func lowerDescription(_ element: AXUIElement) -> String {
@@ -114,6 +120,13 @@ extension AXLogicProElements {
     private static func layout(of item: AXUIElement) -> StripLayout {
         let all = AXHelpers.findAllDescendants(of: item, role: nil, maxDepth: 8)
         var groups: [PluginGroup] = []
+        var sends: [String] = []
+        for element in all where AXHelpers.getRole(element) == kAXButtonRole {
+            let label = (AXHelpers.getTitle(element) ?? "").isEmpty
+                ? (AXHelpers.getDescription(element) ?? "") : (AXHelpers.getTitle(element) ?? "")
+            let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+            if isSendLabel(trimmed), !sends.contains(trimmed) { sends.append(trimmed) }
+        }
         for element in all where AXHelpers.getRole(element) == kAXGroupRole {
             let children = AXHelpers.getChildren(element)
             let box = children.first { child in
@@ -123,6 +136,13 @@ extension AXLogicProElements {
             guard let box else { continue }
             let list = children.first { AXHelpers.getRole($0) == kAXButtonRole && lowerDescription($0) == "list" }
             let name = (AXHelpers.getDescription(element) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            // A plug-in is a group with BOTH a bypass checkbox and a list button; anything else with a
+            // bypass box (for example a send slot) is not an effect.
+            if isSendLabel(name) {
+                if !sends.contains(name) { sends.append(name) }
+                continue
+            }
+            guard list != nil else { continue }
             let y = frame(of: element)?.minY ?? frame(of: box)?.minY ?? 0
             groups.append(PluginGroup(element: element, name: name, y: y, bypassBox: box, listButton: list))
         }
@@ -138,7 +158,7 @@ extension AXLogicProElements {
         }
         return StripLayout(
             all: all, instrument: instrument, effects: effects, hasMidiPluginButton: midi != nil,
-            emptyInstrumentButton: emptyInstrument, emptyEffectButton: emptyEffect)
+            emptyInstrumentButton: emptyInstrument, emptyEffectButton: emptyEffect, sends: sends)
     }
 
     private static func plugin(from group: PluginGroup) -> StripPlugin {
@@ -213,7 +233,8 @@ extension AXLogicProElements {
             hasMidiPluginButton: strip.hasMidiPluginButton,
             hasEmptyInstrumentSlot: strip.emptyInstrumentButton != nil,
             hasEmptyEffectSlot: strip.emptyEffectButton != nil,
-            master: master)
+            master: master,
+            sends: strip.sends)
     }
 
     // MARK: - Pressing slots
@@ -254,6 +275,33 @@ extension AXLogicProElements {
         return SlotPressOutcome(
             found: true, candidateCount: groupCount, chosen: describe(element), method: "AXPress",
             resultCode: code.rawValue, actions: actions.joined(separator: ","), diagnostic: "")
+    }
+
+    // MARK: - Opening a plug-in window
+
+    /// Press the `open` button of the plug-in group addressed by `target` (the plug-in window opens).
+    /// (found, plug-in name, note). The press uses a short messaging timeout and its return code is only recorded.
+    static func pressPluginOpen(target: PluginTarget) -> (found: Bool, name: String, note: String) {
+        guard let selected = stripItems().selected else {
+            return (false, "", "no selected-track item in the Inspector strip")
+        }
+        let strip = layout(of: selected)
+        guard let group = resolve(target, in: strip) else {
+            return (false, "", "plug-in not found in the strip (chain: \(plugins(of: strip)))")
+        }
+        let children = AXHelpers.getChildren(group.element)
+        guard let open = children.first(where: { AXHelpers.getRole($0) == kAXButtonRole && lowerDescription($0) == "open" }) else {
+            return (false, group.name, "the plug-in group has no 'open' button")
+        }
+        _ = AXUIElementSetMessagingTimeout(open, 0.7)
+        let code = AXUIElementPerformAction(open, kAXPressAction as CFString)
+        _ = AXUIElementSetMessagingTimeout(open, 0)
+        return (true, group.name, "AXPress on 'open' returned \(code.rawValue)")
+    }
+
+    private static func plugins(of strip: StripLayout) -> String {
+        let all = (strip.instrument.map { [$0] } ?? []) + strip.effects
+        return all.map { $0.name }.joined(separator: ", ")
     }
 
     // MARK: - Bypass

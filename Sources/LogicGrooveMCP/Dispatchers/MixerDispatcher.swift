@@ -7,7 +7,9 @@ struct MixerDispatcher {
         description: """
             Mixer actions in Logic Pro. \
             Commands: strip, set_volume, set_pan, set_send, set_output, set_input, \
-            set_master_volume, toggle_eq, reset_strip, bypass_plugin, insert_plugin. \
+            set_master_volume, toggle_eq, reset_strip, bypass_plugin, insert_plugin, open_plugin, close_plugin, \
+            plugin_setting, set_plugin_setting, plugin_settings_menu, plugin_popups, set_plugin_popup, plugin_params, \
+            set_plugin_param. \
             Params by command: \
             strip -> { track?: Int } (JSON of the selected track's channel strip read through Accessibility: \
             instrument and effects top to bottom with bypass state, volume text, peak level text and clipping, \
@@ -32,7 +34,24 @@ struct MixerDispatcher {
             if the track cannot be selected the command refuses to act (nothing is changed). The message carries a step trace; \
             the result returns undo_label; \
             bypass_plugin -> { track?: Int, plugin?: String (name substring) or slot?: Int (0 = instrument, n = n-th effect), \
-            bypassed: Bool } (presses the bypass checkbox only when the state differs, read back)
+            bypassed: Bool } (presses the bypass checkbox only when the state differs, read back); \
+            PLUG-IN WINDOW COMMANDS. Common params: track?: Int (0-based, selected and read back; omit = selected track), \
+            plugin?: String (name substring among instrument and effects) or slot?: Int (0 = instrument, n = n-th effect; \
+            default the instrument), keep_open?: Bool (default false: a window the command opened is closed again at the end). \
+            open_plugin -> {} (opens the window and leaves it open); close_plugin -> {}; \
+            plugin_setting -> {} (the current setting name of Logic's settings menu); \
+            set_plugin_setting -> { setting: String, a path with "/" for submenus, e.g. "Dub Delays/Dub Echo" } (verified by the \
+            pop-up value; when an item is not found the error lists the titles of that menu level, which also lists the settings); \
+            plugin_settings_menu -> { path?: String } (lists the items of the settings menu or of the submenu `path`); \
+            plugin_popups -> {} (settings pop-up and plug-in specific pop-ups: index | value; Drum Synth: 0 = sound category, \
+            1 = sound module); \
+            set_plugin_popup -> { index: Int (0-based among the plug-in specific pop-ups), value: String } (verified by the value); \
+            plugin_params -> { filter?: String } (switches the window to Logic's Controls view and lists every slider: \
+            index | label | value text | raw (min..max) | flags v = slider value settable, t = text field settable; switches back); \
+            set_plugin_param -> { param?: String (label) or index?: Int, value: Number or String, raw?: Bool } (tries the slider \
+            AXValue with a linear probe, then the numeric text field, then AXIncrement / AXDecrement; read back after each; \
+            success within one step of the displayed value). The Controls view structure is not verified yet: use \
+            logic_system debug_plugin to see it
             """,
         inputSchema: .object([
             "type": .string("object"),
@@ -188,9 +207,70 @@ struct MixerDispatcher {
             let result = await router.route(operation: "plugin.bypass", params: bypassParams)
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
+        case "open_plugin", "close_plugin", "plugin_setting", "set_plugin_setting", "plugin_settings_menu",
+             "plugin_popups", "set_plugin_popup", "plugin_params", "set_plugin_param":
+            let operations: [String: String] = [
+                "open_plugin": "plugin.open", "close_plugin": "plugin.close",
+                "plugin_setting": "plugin.setting_get", "set_plugin_setting": "plugin.setting_set",
+                "plugin_settings_menu": "plugin.settings_menu", "plugin_popups": "plugin.popups",
+                "set_plugin_popup": "plugin.popup_set", "plugin_params": "plugin.params",
+                "set_plugin_param": "plugin.param_set",
+            ]
+            guard let operation = operations[command] else {
+                return CallTool.Result(content: [.text("Unknown plug-in command: \(command)")], isError: true)
+            }
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["track_index"]) ?? -1
+            var pluginParams: [String: String] = ["track_index": String(track)]
+            if let plugin = params["plugin"]?.stringValue ?? params["name"]?.stringValue, !plugin.isEmpty {
+                pluginParams["plugin"] = plugin
+            } else if let slot = params["slot"]?.stringValue ?? InputValidation.looseInt(params["slot"]).map({ String($0) }) {
+                pluginParams["slot"] = slot
+            }
+            if let keepOpen = params["keep_open"]?.boolValue { pluginParams["keep_open"] = keepOpen ? "true" : "false" }
+            switch command {
+            case "set_plugin_setting":
+                guard let setting = params["setting"]?.stringValue, !setting.isEmpty else {
+                    return CallTool.Result(content: [.text("set_plugin_setting requires 'setting' (a menu item title or a path with \"/\")")], isError: true)
+                }
+                pluginParams["setting"] = setting
+            case "plugin_settings_menu":
+                if let path = params["path"]?.stringValue, !path.isEmpty { pluginParams["path"] = path }
+            case "set_plugin_popup":
+                guard let index = InputValidation.looseInt(params["index"]), index >= 0 else {
+                    return CallTool.Result(content: [.text("set_plugin_popup requires 'index' (0-based among the plug-in specific pop-ups)")], isError: true)
+                }
+                guard let value = params["value"]?.stringValue, !value.isEmpty else {
+                    return CallTool.Result(content: [.text("set_plugin_popup requires 'value' (the menu item title)")], isError: true)
+                }
+                pluginParams["index"] = String(index)
+                pluginParams["value"] = value
+            case "plugin_params":
+                if let filter = params["filter"]?.stringValue, !filter.isEmpty { pluginParams["filter"] = filter }
+            case "set_plugin_param":
+                if let name = params["param"]?.stringValue, !name.isEmpty {
+                    pluginParams["param"] = name
+                } else if let index = InputValidation.looseInt(params["index"]) {
+                    pluginParams["index"] = String(index)
+                } else {
+                    return CallTool.Result(content: [.text("set_plugin_param requires 'param' (label) or 'index'")], isError: true)
+                }
+                if let number = InputValidation.looseDouble(params["value"]) {
+                    pluginParams["value"] = String(format: "%.8f", number)
+                } else if let text = params["value"]?.stringValue, !text.isEmpty {
+                    pluginParams["value"] = text
+                } else {
+                    return CallTool.Result(content: [.text("set_plugin_param requires 'value'")], isError: true)
+                }
+                if let raw = params["raw"]?.boolValue { pluginParams["raw"] = raw ? "true" : "false" }
+            default:
+                break
+            }
+            let result = await router.route(operation: operation, params: pluginParams)
+            return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
+
         default:
             return CallTool.Result(
-                content: [.text("Unknown mixer command: \(command). Available: strip, set_volume, set_pan, set_send, set_output, set_input, set_master_volume, toggle_eq, reset_strip, insert_plugin, bypass_plugin")],
+                content: [.text("Unknown mixer command: \(command). Available: strip, set_volume, set_pan, set_send, set_output, set_input, set_master_volume, toggle_eq, reset_strip, insert_plugin, bypass_plugin, open_plugin, close_plugin, plugin_setting, set_plugin_setting, plugin_settings_menu, plugin_popups, set_plugin_popup, plugin_params, set_plugin_param")],
                 isError: true
             )
         }

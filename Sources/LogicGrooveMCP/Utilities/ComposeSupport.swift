@@ -285,4 +285,147 @@ enum ComposeSupport {
             at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
         return urls?.count ?? 0
     }
+
+    // MARK: - Pure helpers added in 0.4.3
+
+    /// The nearer of two neighbouring fader readings (ties go to the lower one).
+    static func nearestStep(target: Double, lower: Double, upper: Double) -> Double {
+        (target - lower) <= (upper - target) ? lower : upper
+    }
+
+    /// Bank and program of a track or plug-in name written by u-he synths after a bank program load:
+    /// "0/29 029 HS Stabz" -> (bank 0, program 29). nil for any other name.
+    static func parseBankProgram(_ name: String) -> (bank: Int, program: Int)? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let space = trimmed.firstIndex(of: " ") else { return nil }
+        let head = trimmed[trimmed.startIndex..<space]
+        let parts = head.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2, let bank = Int(parts[0]), let program = Int(parts[1]),
+              bank >= 0, program >= 0 else { return nil }
+        return (bank, program)
+    }
+
+    /// The preset name inside a bank track name: "0/29 029 HS Stabz" -> "HS Stabz". nil when the name
+    /// has no bank prefix.
+    static func presetNameFromBankName(_ name: String) -> String? {
+        guard parseBankProgram(name) != nil else { return nil }
+        let words = name.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ", omittingEmptySubsequences: true)
+        guard words.count >= 3 else { return nil }
+        // words[0] = "0/29", words[1] = "029" (file index), the rest is the preset name.
+        return words.dropFirst(2).joined(separator: " ")
+    }
+
+    /// Format `value` the way `sample` is written: same unit suffix (everything after the last digit or
+    /// decimal separator), same decimal separator and the same number of decimals.
+    /// ("12,5 %" like, 40) -> "40,0 %"; ("0.50", 0.25) -> "0.25"; ("-6,0 dB", -3) -> "-3,0 dB".
+    static func formatValue(_ value: Double, like sample: String) -> String {
+        let trimmed = sample.trimmingCharacters(in: .whitespacesAndNewlines)
+        var lastNumberIndex = trimmed.endIndex
+        var found = false
+        var index = trimmed.endIndex
+        while index > trimmed.startIndex {
+            let previous = trimmed.index(before: index)
+            if trimmed[previous].isNumber { lastNumberIndex = trimmed.index(after: previous); found = true; break }
+            index = previous
+        }
+        let numberPart = found ? String(trimmed[trimmed.startIndex..<lastNumberIndex]) : trimmed
+        let suffix = found ? String(trimmed[lastNumberIndex...]) : ""
+        let separator: Character = numberPart.contains(",") ? "," : "."
+        var decimals = 0
+        if let range = numberPart.lastIndex(of: separator), numberPart.contains(separator) {
+            decimals = numberPart.distance(from: range, to: numberPart.endIndex) - 1
+        }
+        var text = String(format: "%.\(max(0, min(decimals, 6)))f", value)
+        if separator == "," { text = text.replacingOccurrences(of: ".", with: ",") }
+        return text + suffix
+    }
+
+    /// The number inside a displayed parameter text: "12,5 %" -> 12.5, "-6.0 dB" -> -6, "1.2 kHz" -> 1.2.
+    /// nil when no number is found.
+    static func parseDisplayedNumber(_ text: String) -> Double? {
+        var token = ""
+        var seenDigit = false
+        for character in text {
+            if character.isNumber || (character == "-" && token.isEmpty) || (character == "+" && token.isEmpty) {
+                token.append(character)
+                if character.isNumber { seenDigit = true }
+            } else if (character == "," || character == ".") && seenDigit && !token.contains(".") {
+                token.append(".")
+            } else if seenDigit {
+                break
+            } else if character == "\u{2212}" && token.isEmpty {
+                token.append("-")
+            } else if token == "-" || token == "+" {
+                token = ""
+            }
+        }
+        if token.hasPrefix("+") { token.removeFirst() }
+        return seenDigit ? Double(token) : nil
+    }
+
+    /// One compact preset line: "name | folder | categories | program N" (program only when known).
+    static func compactPresetLine(name: String, folder: String, categories: [String], program: Int?) -> String {
+        var line = "\(name) | \(folder) | \(categories.joined(separator: ", "))"
+        if let program { line += " | program \(program)" }
+        return line
+    }
+
+    /// Bank line: "program  name" with the program right-aligned to three digits.
+    static func compactBankLine(program: Int, name: String) -> String {
+        let number = String(program)
+        let pad = String(repeating: " ", count: max(0, 3 - number.count))
+        return "\(pad)\(number)  \(name)"
+    }
+
+    /// Number of decimals of the number shown in a parameter text: "12,50 %" -> 2, "40 Hz" -> 0.
+    static func displayedDecimals(_ text: String) -> Int {
+        var seenDigit = false
+        var afterSeparator = 0
+        var inFraction = false
+        for character in text {
+            if character.isNumber {
+                seenDigit = true
+                if inFraction { afterSeparator += 1 }
+            } else if (character == "," || character == ".") && seenDigit && !inFraction {
+                inFraction = true
+            } else if seenDigit {
+                break
+            }
+        }
+        return afterSeparator
+    }
+
+    /// "a/b/c" -> ["a", "b", "c"] (trimmed, empty components dropped).
+    static func splitMenuPath(_ text: String) -> [String] {
+        text.split(separator: "/", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    // MARK: - Bounce
+
+    /// Folder for bounced audio: ~/Music/LogicGrooveMCP/Bounces (not created here).
+    static func bouncesDirectory() -> URL {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Music/LogicGrooveMCP/Bounces", isDirectory: true)
+    }
+
+    /// Validate the target of a bounce: nil / empty -> bounces folder + "bounce-<timestamp>.wav"; otherwise an
+    /// absolute or "~" path inside the user's home folder with an audio extension (wav, aif, aiff, mp3, m4a, caf).
+    static func validateBouncePath(_ raw: String?, now: Date = Date()) -> Validation<String> {
+        let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return .success(bouncesDirectory().appendingPathComponent("bounce-\(timestamp(now)).wav").path)
+        }
+        guard trimmed.count <= 4_096, !trimmed.contains("\0") else { return .failure("path is too long or invalid") }
+        guard trimmed.hasPrefix("/") || trimmed.hasPrefix("~") else { return .failure("path must be absolute or start with ~") }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        let url = URL(fileURLWithPath: expanded).standardizedFileURL
+        let allowed = ["wav", "aif", "aiff", "mp3", "m4a", "caf"]
+        guard allowed.contains(url.pathExtension.lowercased()) else {
+            return .failure("path must end in one of: \(allowed.joined(separator: ", "))")
+        }
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        guard path(url.path, isInside: [home]) else { return .failure("path must be inside your home folder") }
+        return .success(url.path)
+    }
 }

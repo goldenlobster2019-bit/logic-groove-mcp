@@ -36,6 +36,10 @@ actor AccessibilityChannel: Channel {
             return getTransportState()
 
         // MARK: - Transport mutations
+        case "transport.play":
+            return await playTransportAX()
+        case "transport.stop":
+            return await stopTransportAX()
         case "transport.toggle_cycle":
             return toggleTransportButton(named: "Cycle")
         case "transport.toggle_metronome":
@@ -104,6 +108,8 @@ actor AccessibilityChannel: Channel {
         // MARK: - Project
         case "project.get_info":
             return getProjectInfo()
+        case "project.bounce":
+            return await bounceProject(params: params)
 
         // MARK: - Regions
         case "region.get_regions":
@@ -138,12 +144,34 @@ actor AccessibilityChannel: Channel {
         // MARK: - Sounds
         case "sound.prepare_instrument":
             return await prepareInstrumentForSound(params: params)
+        case "sound.verify":
+            return await verifyTrackName(params: params)
 
         // MARK: - Plugins
         case "plugin.insert":
             return await insertPlugin(params: params)
         case "plugin.bypass":
             return await bypassPlugin(params: params)
+        case "plugin.open":
+            return await openPluginCommand(params: params)
+        case "plugin.close":
+            return await closePluginCommand(params: params)
+        case "plugin.setting_get":
+            return await pluginSettingRead(params: params)
+        case "plugin.setting_set":
+            return await setPluginSetting(params: params)
+        case "plugin.settings_menu":
+            return await pluginSettingsMenu(params: params)
+        case "plugin.popups":
+            return await pluginPopupsRead(params: params)
+        case "plugin.popup_set":
+            return await setPluginPopup(params: params)
+        case "plugin.params":
+            return await pluginParamsRead(params: params)
+        case "plugin.param_set":
+            return await setPluginParam(params: params)
+        case "plugin.debug":
+            return await debugPlugin(params: params)
         case "plugin.list", "plugin.remove":
             return .error("Plugin operations not yet implemented via AX")
 
@@ -351,7 +379,7 @@ actor AccessibilityChannel: Channel {
     // MARK: - Project
 
     private func getProjectInfo() -> ChannelResult {
-        guard let window = AXLogicProElements.mainWindow() else {
+        guard let window = AXLogicProElements.projectWindow() ?? AXLogicProElements.mainWindow() else {
             return .error("Cannot locate Logic Pro main window")
         }
         let title = AXHelpers.getTitle(window) ?? "Unknown"

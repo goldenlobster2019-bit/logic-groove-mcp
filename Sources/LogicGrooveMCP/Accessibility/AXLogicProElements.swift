@@ -21,7 +21,7 @@ enum AXLogicProElements {
 
     /// Find the transport bar area (toolbar/group containing play, stop, record, etc.)
     static func getTransportBar() -> AXUIElement? {
-        guard let window = mainWindow() else { return nil }
+        guard let window = projectWindow() ?? mainWindow() else { return nil }
         if let bar = AXHelpers.findChild(of: window, role: kAXGroupRole, description: "Control Bar") {
             return bar
         }
@@ -63,7 +63,7 @@ enum AXLogicProElements {
 
     /// Find the track header area containing individual track rows.
     static func getTrackHeaders() -> AXUIElement? {
-        guard let window = mainWindow() else { return nil }
+        guard let window = projectWindow() ?? mainWindow() else { return nil }
         if let area = AXHelpers.findDescendant(
             of: window, role: kAXGroupRole, description: "Tracks header"
         ) {
@@ -98,7 +98,7 @@ enum AXLogicProElements {
 
     /// Find the mixer area.
     static func getMixerArea() -> AXUIElement? {
-        guard let window = mainWindow() else { return nil }
+        guard let window = projectWindow() ?? mainWindow() else { return nil }
         // Logic Pro leaves AXIdentifier empty on these containers, so the mixer
         // has to be matched on AXDescription instead.
         //
@@ -207,7 +207,7 @@ enum AXLogicProElements {
 
     /// Find the main arrangement area (the timeline/tracks view).
     static func getArrangementArea() -> AXUIElement? {
-        guard let window = mainWindow() else { return nil }
+        guard let window = projectWindow() ?? mainWindow() else { return nil }
         if let area = AXHelpers.findDescendant(of: window, role: kAXGroupRole, identifier: "Arrangement") {
             return area
         }

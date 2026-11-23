@@ -12,23 +12,30 @@ struct SoundDispatcher {
             Choose presets of u-he synths (default plug-in "Diva") without the plug-in's custom-drawn UI, through the synth's \
             "MIDI Programs" folder: up to 128 presets that the synth loads ALPHABETICALLY when the host starts (the first file is \
             program 0) and selects by MIDI Program Change. \
-            Commands: folders, presets, bank, bank_install, set_preset. \
+            Commands: folders, presets, preset_info, bank, bank_install, set_preset, verify. \
             Params common to all commands: plugin?: String (default "Diva"; letters, digits, space, dash, underscore, max 40). \
             Preset roots: /Library/Audio/Presets/u-he/<plugin> (local) and ~/Library/Audio/Presets/u-he/<plugin> (user); the bank \
             folder is <local root>/MIDI Programs (it must be writable by the user: Finder > Get Info > Sharing & Permissions). \
             folders -> {} (existing roots, total count, preset folders with counts); \
-            presets -> { query?: String, folder?: String, category?: String, limit?: Int (1-200, default 40), meta?: Bool (default true: \
-            read categories, features and character from the files) } (browse; `program` is shown when the preset is in the bank); \
-            bank -> {} (the installed bank: program, name, file; warns when the bank changed after Logic was launched); \
+            presets -> { query?: String, folder?: String, category?: String, limit?: Int (1-200, default 40), format?: "text" (default) | "json" } \
+            (browse; the default output is COMPACT plain text: a first line `shown/total`, then one line per preset: \
+            `name | folder | categories | program N` (program only when the preset is in the bank); format "json" gives the full \
+            meta objects); \
+            preset_info -> { preset: String (name or "folder/name") } (JSON: name, folder, author, description, usage - how the \
+            preset is meant to be played, e.g. which key -, categories, features, character, program); \
+            bank -> { format?: "text" (default: `program  name` per line) | "json" } (the installed bank; warns when the bank \
+            changed after Logic was launched); \
             bank_install -> { presets: [String] (1-128 names, "folder/name" or absolute paths inside the roots), mode?: "replace" \
             (default: the bank holds exactly these) | "append" } (all references are resolved first, any failure writes nothing; \
             restart_required is always true: QUIT AND REOPEN LOGIC PRO, the synth reads MIDI Programs only when the host starts); \
-            set_preset -> { track?: Int (0-based; omit = the selected track), preset?: String (name, number or unique part of a name \
-            in the bank) or program?: Int (0-127), channel?: Int (1-16, default 1) } (selects the track with read-back, requires the \
-            instrument to be the plug-in (insert it first with logic_mixer insert_plugin slot "instrument"), sends Bank Select CC 0 = 0 \
-            and the Program Change, then reads the track name back; verified is true only when the name now contains the preset name; \
-            otherwise the Program Change was sent but the plug-in display cannot be read through Accessibility). \
-            Workflow: presets / folders to browse, bank_install once, restart Logic, then per track insert_plugin + set_preset.
+            set_preset -> { track?: Int, preset?: String or program?: Int } (DOES NOT SEND MIDI: a live Program Change does not reach \
+            the plug-in. It returns { ok: false, program, message } with the program number resolved from the bank; put `program: N` \
+            on the clip written with logic_compose write, then check the track name with verify); \
+            verify -> { track?: Int (0-based; omit = the selected track), preset?: String } (selects the track with read-back and \
+            returns { track, track_name, bank_program (parsed from a name like "0/29 029 HS Stabz", else null), matches (only with \
+            preset) }). \
+            Workflow: presets / preset_info to browse, bank_install once, restart Logic, then per track: insert_plugin, \
+            logic_compose write with `program`, verify.
             """,
         inputSchema: .object([
             "type": .string("object"),
@@ -64,14 +71,18 @@ struct SoundDispatcher {
             return foldersResult(plugin: plugin)
         case "presets":
             return presetsResult(plugin: plugin, params: params)
+        case "preset_info":
+            return presetInfoResult(plugin: plugin, params: params)
         case "bank":
-            return bankResult(plugin: plugin)
+            return bankResult(plugin: plugin, params: params)
+        case "verify":
+            return await verifyResult(plugin: plugin, params: params, router: router)
         case "bank_install":
             return bankInstallResult(plugin: plugin, params: params)
         case "set_preset":
             return await setPresetResult(plugin: plugin, params: params, router: router)
         default:
-            return error("Unknown sounds command: \(command). Available: folders, presets, bank, bank_install, set_preset")
+            return error("Unknown sounds command: \(command). Available: folders, presets, preset_info, bank, bank_install, set_preset, verify")
         }
     }
 
@@ -159,8 +170,7 @@ struct SoundDispatcher {
         let query = optionalText(params, "query")
         let folder = optionalText(params, "folder")
         let category = optionalText(params, "category")
-        let wantMeta = params["meta"]?.boolValue ?? true
-        let readMeta = wantMeta || query != nil || category != nil
+        let readMeta = true
 
         let presets = PresetLibrary.scan(roots: roots.map { $0.url }, readMeta: readMeta)
         let matches = PresetLibrary.search(presets, query: query, folder: folder, category: category, limit: 0)
@@ -169,6 +179,16 @@ struct SoundDispatcher {
         var programByName: [String: Int] = [:]
         for entry in PresetLibrary.readBank(folder: ComposeSupport.uheBankFolder(plugin: plugin)) {
             programByName[entry.name.lowercased()] = entry.program
+        }
+        let asJSON = (params["format"]?.stringValue ?? "text").lowercased() == "json"
+        if !asJSON {
+            var lines = ["\(shown.count)/\(matches.count)"]
+            for preset in shown {
+                lines.append(ComposeSupport.compactPresetLine(
+                    name: preset.name, folder: preset.folder, categories: preset.categories,
+                    program: programByName[preset.name.lowercased()]))
+            }
+            return CallTool.Result(content: [.text(lines.joined(separator: "\n"))], isError: false)
         }
         let values: [Value] = shown.map { preset in
             var object: [String: Value] = [
@@ -192,6 +212,38 @@ struct SoundDispatcher {
         ]))
     }
 
+    private static func presetInfoResult(plugin: String, params: [String: Value]) -> CallTool.Result {
+        let roots = existingRoots(plugin: plugin)
+        guard !roots.isEmpty else { return error(noRootsMessage(plugin: plugin)) }
+        guard let reference = optionalText(params, "preset") else { return error("preset_info needs 'preset' (name or \"folder/name\")") }
+        guard ComposeSupport.isSafePresetReference(reference) else {
+            return error("preset is not a valid reference (too long, control characters or \"..\")")
+        }
+        let library = PresetLibrary.scan(roots: roots.map { $0.url }, readMeta: true)
+        switch PresetLibrary.resolve(reference, in: library) {
+        case .failure(let failure):
+            return error("'\(reference)': \(describe(failure))")
+        case .success(let preset):
+            var program = Value.null
+            for entry in PresetLibrary.readBank(folder: ComposeSupport.uheBankFolder(plugin: plugin))
+            where entry.name.lowercased() == preset.name.lowercased() {
+                program = .int(entry.program)
+                break
+            }
+            return json(.object([
+                "name": .string(preset.name),
+                "folder": .string(preset.folder),
+                "author": preset.author.map { Value.string($0) } ?? Value.null,
+                "description": preset.description.map { Value.string($0) } ?? Value.null,
+                "usage": preset.usage.map { Value.string($0) } ?? Value.null,
+                "categories": .array(preset.categories.map { Value.string($0) }),
+                "features": .array(preset.features.map { Value.string($0) }),
+                "character": .array(preset.character.map { Value.string($0) }),
+                "program": program,
+            ]))
+        }
+    }
+
     private static func optionalText(_ params: [String: Value], _ key: String) -> String? {
         guard let text = params[key]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
             return nil
@@ -201,10 +253,17 @@ struct SoundDispatcher {
 
     // MARK: - bank
 
-    private static func bankResult(plugin: String) -> CallTool.Result {
+    private static func bankResult(plugin: String, params: [String: Value]) -> CallTool.Result {
         let folder = ComposeSupport.uheBankFolder(plugin: plugin)
         let entries = PresetLibrary.readBank(folder: folder)
         let changed = bankChangedAfterLogicLaunch(plugin: plugin)
+        if (params["format"]?.stringValue ?? "text").lowercased() != "json" {
+            var lines: [String] = ["\(entries.count) programs in \(folder.path)"]
+            if changed == true { lines.append("WARNING: \(restartWarning)") }
+            if entries.isEmpty { lines.append("The bank is empty or the folder does not exist. Run bank_install, then quit and reopen Logic Pro.") }
+            for entry in entries { lines.append(ComposeSupport.compactBankLine(program: entry.program, name: entry.name)) }
+            return CallTool.Result(content: [.text(lines.joined(separator: "\n"))], isError: false)
+        }
         var result: [String: Value] = [
             "plugin": .string(plugin),
             "folder": .string(folder.path),
@@ -308,11 +367,6 @@ struct SoundDispatcher {
             }
             track = value
         }
-        let channel: Int
-        switch InputValidation.int(params, keys: ["channel"], default: 1, range: 1...16, label: "channel") {
-        case .success(let value): channel = value
-        case .failure(let message): return error(message)
-        }
         var wantedProgram: Int?
         if let supplied = params["program"], !isNull(supplied) {
             guard let value = InputValidation.looseInt(supplied), (0...127).contains(value) else {
@@ -355,70 +409,72 @@ struct SoundDispatcher {
         let changedAfterLaunch = bankChangedAfterLogicLaunch(plugin: plugin) == true
         if changedAfterLaunch { trace.append(restartWarning) }
 
-        // (b-c) Select the track with read-back and require the plug-in as instrument.
+        // Keep the track and instrument checks so the message can name the current track.
         let prepared = await router.route(
             operation: "sound.prepare_instrument",
             params: ["track_index": String(track ?? -1), "plugin": plugin]
         )
-        guard prepared.isSuccess else {
-            return error("Nothing was sent. \(prepared.message)")
-        }
         trace.append(prepared.message)
-
-        // (d) The header name before.
-        let selectedIndex = AXLogicProElements.selectedTrackIndex()
-        let nameBefore = AXLogicProElements.selectedTrackName()
-
-        // (e) Bank Select MSB 0, then the Program Change.
-        let midiChannel = String(channel - 1)
-        let bankSelect = await router.route(
-            operation: "midi.send_cc",
-            params: ["controller": "0", "value": "0", "channel": midiChannel]
-        )
-        guard bankSelect.isSuccess else {
-            return error("Bank Select could not be sent: \(bankSelect.message). Trace: \(trace.joined(separator: "; "))")
-        }
-        _ = try? await Task.sleep(for: .milliseconds(60))
-        let programChange = await router.route(
-            operation: "midi.send_program_change",
-            params: ["program": String(entry.program), "channel": midiChannel]
-        )
-        guard programChange.isSuccess else {
-            return error("Program Change could not be sent: \(programChange.message). Trace: \(trace.joined(separator: "; "))")
-        }
-        trace.append("sent Bank Select CC 0 = 0 and Program Change \(entry.program) on channel \(channel)")
-
-        // (f) Wait, then read the header name again.
-        _ = try? await Task.sleep(for: .milliseconds(600))
-        let nameAfter: String?
-        if let selectedIndex {
-            nameAfter = AXLogicProElements.trackHeaderName(index: selectedIndex)
-        } else {
-            nameAfter = AXLogicProElements.selectedTrackName()
-        }
-        let verified = nameAfter.map { $0.lowercased().contains(entry.name.lowercased()) } ?? false
-
-        var message: String
-        if verified {
-            message = "Program Change \(entry.program) sent; the track is now named '\(nameAfter ?? "")' (preset '\(entry.name)')."
-        } else {
-            message = "Bank Select and Program Change \(entry.program) ('\(entry.name)') were sent, but the plug-in display cannot be read through Accessibility, so the preset is not verified (track name: '\(nameAfter ?? "?")'). Listen to confirm."
+        let currentName = AXLogicProElements.selectedTrackName()
+        var message = "No MIDI was sent: a live Program Change does not reach the plug-in in Logic. Preset '\(entry.name)' is program \(entry.program) of the \(plugin) bank. Write the part with logic_compose write and `program: \(entry.program)` (the Program Change inside the region loads the preset when the region start is played or chased), then check the track name with logic_sounds verify: it reads like \"0/\(entry.program) \(String(format: "%03d", entry.program)) \(entry.name)\"."
+        if !prepared.isSuccess {
+            message += " Note: the track/instrument check failed: \(prepared.message)"
         }
         if changedAfterLaunch {
             message += " Warning: \(restartWarning)"
         }
         return json(.object([
-            "ok": .bool(true),
+            "ok": .bool(false),
             "program": .int(entry.program),
             "preset": .string(entry.name),
-            "track": selectedIndex.map { Value.int($0) } ?? Value.null,
-            "track_name_before": nameBefore.map { Value.string($0) } ?? Value.null,
-            "track_name_after": nameAfter.map { Value.string($0) } ?? Value.null,
-            "verified": .bool(verified),
-            "restart_hint": .bool(changedAfterLaunch),
+            "current_track_name": currentName.map { Value.string($0) } ?? Value.null,
             "message": .string(message),
             "trace": .array(trace.map { Value.string($0) }),
         ]))
+    }
+
+    // MARK: - verify
+
+    private static func verifyResult(plugin: String, params: [String: Value], router: ChannelRouter) async -> CallTool.Result {
+        var track = -1
+        if let supplied = params["track"], !isNull(supplied) {
+            guard let value = InputValidation.looseInt(supplied), (0...10_000).contains(value) else {
+                return error("track must be an integer between 0 and 10000 (0-based)")
+            }
+            track = value
+        }
+        let reference = optionalText(params, "preset")
+        let result = await router.route(operation: "sound.verify", params: ["track_index": String(track)])
+        guard result.isSuccess else { return error(result.message) }
+        guard let data = result.message.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return error("Unreadable verify result: \(result.message)")
+        }
+        let trackName = (object["track_name"] as? String) ?? ""
+        var fields: [String: Value] = [
+            "track": (object["track"] as? Int).map { Value.int($0) } ?? Value.null,
+            "track_name": .string(trackName),
+        ]
+        if let parsed = ComposeSupport.parseBankProgram(trackName) {
+            fields["bank_program"] = .int(parsed.program)
+            fields["bank"] = .int(parsed.bank)
+        } else {
+            fields["bank_program"] = .null
+        }
+        if let reference {
+            let bank = PresetLibrary.readBank(folder: ComposeSupport.uheBankFolder(plugin: plugin))
+            let entry = PresetLibrary.program(for: reference, in: bank)
+            let lowered = trackName.lowercased()
+            var matches = false
+            if let entry {
+                matches = lowered.contains(entry.name.lowercased())
+                fields["expected_program"] = .int(entry.program)
+            } else {
+                matches = lowered.contains(reference.lowercased())
+            }
+            fields["matches"] = .bool(matches)
+        }
+        return json(.object(fields))
     }
 
     private static func isNull(_ value: Value) -> Bool {

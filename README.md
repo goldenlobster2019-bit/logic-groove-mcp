@@ -60,7 +60,7 @@ logic_edit("last_undo", {})
 | Tool | Purpose | Example |
 |------|---------|---------|
 | `logic_compose` | styles, generate, write, analyze_region, analyze_file, complement, import_midi, set_loop | `logic_compose("generate", {genre: "house", part: "bass"})` |
-| `logic_sounds` | folders, presets, bank, bank_install, set_preset (u-he presets such as Diva without the plug-in UI) | `logic_sounds("set_preset", {track: 2, preset: "HS Stabz"})` |
+| `logic_sounds` | folders, presets, preset_info, bank, bank_install, set_preset, verify (u-he presets such as Diva via the MIDI Programs bank) | `logic_sounds("verify", {track: 2, preset: "HS Stabz"})` |
 | `logic_transport` | play, stop, record, set_tempo, goto_position, cycle_to_regions... | `logic_transport("set_tempo", {tempo: 124})` |
 | `logic_tracks` | select, create_*, delete, mute, solo, arm, rename (mute, solo, rename and delete are verified by read-back) | `logic_tracks("mute", {index: 2, enabled: true})` |
 | `logic_mixer` | strip, set_volume, set_pan, insert_plugin, bypass_plugin... | `logic_mixer("insert_plugin", {track: 2, slot: "instrument", name: "Diva"})` |
@@ -113,15 +113,18 @@ Deep house and house currently share the same pattern generators; they differ in
 | `cc` | `[{ cc, points: [{ pos or step, value }], curve?, resolution? }]`: controller lanes, for example a mod wheel (CC 1) sweep (0.4.0) |
 | `import`, `at_bar`, `loop`, `tempo`, `track` | As for `generate` |
 
-### Sounds: Diva presets
+### Sounds: Diva presets and Logic plug-ins (0.4.3)
 
-`logic_sounds` chooses presets of u-he synths (default plug-in `Diva`, param `plugin` for another) without touching the plug-in's custom-drawn UI. The synth loads up to 128 presets from its `MIDI Programs` folder (`/Library/Audio/Presets/u-he/<plugin>/MIDI Programs`, alphabetical, the first file is program 0) when the host starts and selects them by MIDI Program Change.
+`logic_sounds` browses presets of u-he synths (default plug-in `Diva`, param `plugin` for another). The synth loads up to 128 presets from its `MIDI Programs` folder (`/Library/Audio/Presets/u-he/<plugin>/MIDI Programs`, alphabetical, the first file is program 0) when the host starts. A LIVE Program Change does not reach the plug-in in Logic, so presets are loaded by a Program Change INSIDE the part's region: `program: N` on `logic_compose("write", ...)`.
 
-1. Browse: `logic_sounds("folders")` and `logic_sounds("presets", {query: "bass", limit: 20})` (also `folder`, `category`, `meta`).
-2. Install a bank once: `logic_sounds("bank_install", {presets: ["HS Stabz", "MK Bass Sub Tri", "IW Lush PWM Pad"]})` (`mode` `"replace"` default or `"append"`; names, `folder/name` or absolute paths inside the preset folders; all references are resolved first and nothing is written if one fails). The folder must be writable by your user (Finder > Get Info > Sharing & Permissions). Then QUIT AND REOPEN Logic Pro: the synth reads `MIDI Programs` only when the host starts. `logic_sounds("bank")` lists the installed programs and warns when the bank changed after Logic was launched.
-3. Per track: `logic_mixer("insert_plugin", {track: 2, slot: "instrument", name: "Diva"})`, then `logic_sounds("set_preset", {track: 2, preset: "HS Stabz"})` (or `program: 0-127`, `channel: 1-16`). The track is selected with read-back, the instrument must be the plug-in, Bank Select CC 0 = 0 and the Program Change are sent, and the track name is read back (`verified` is true only when it now contains the preset name; otherwise the Program Change was sent but the plug-in display cannot be read through Accessibility).
+1. Browse: `logic_sounds("folders")`, `logic_sounds("presets", {query: "bass", limit: 20})` (compact text: `shown/total`, then `name | folder | categories | program N`; `format: "json"` for the full objects) and `logic_sounds("preset_info", {preset: "HS Top Hat"})` (description and usage: which key to play).
+2. Install a bank once: `logic_sounds("bank_install", {presets: ["HS Stabz", "MK Bass Sub Tri", "IW Lush PWM Pad"]})` (`mode` `"replace"` default or `"append"`). The folder must be writable by your user. Then QUIT AND REOPEN Logic Pro. `logic_sounds("bank")` lists `program  name` lines.
+3. Per part: `logic_mixer("insert_plugin", {slot: "instrument", name: "Diva"})` after the import, and write the clip with `program: N`. `logic_sounds("verify", {track, preset})` reads the track name back (`0/29 029 HS Stabz`) and reports `bank_program` and `matches`. `logic_sounds("set_preset", ...)` sends no MIDI any more: it returns the program number to put on the clip.
+4. Drums come from Logic's Drum Synth, one instance per drum: `insert_plugin` "Drum Synth", then `logic_mixer("set_plugin_popup", {index: 0, value: "Kicks"})` (sound category) and `{index: 1, value: "Heavy Kick"}` (sound module).
+5. Settings of Logic's own plug-ins: `logic_mixer("plugin_settings_menu")` lists them, `set_plugin_setting {setting: "Dub Delays/Dub Echo"}` chooses one (verified by the pop-up value). Parameters: `plugin_params {filter}` lists every slider of the Controls view, `set_plugin_param {param, value}` sets one (read back). Other commands: `open_plugin`, `close_plugin`, `plugin_setting`, `plugin_popups`. `logic_system("debug_plugin")` dumps the window structure (the Controls view is not verified yet).
+6. `logic_project("bounce", {path?})` exports audio (File > Bounce > Project or Section, best effort, with a step trace) so the result can be analysed.
 
-Drums for house and dub techno are built from the synth's percussive presets, one voice per track (kick, hats, clap), each written as pitched notes with `logic_compose("write", ...)`.
+Other 0.4.3 changes: project-window lookups survive an open plug-in window; `transport.play` / `stop` press the control bar controls; Logic's "additional content" download prompt is cancelled automatically; `set_volume {db}` accepts the nearest fader step; the strip model lists sends separately (`sends`); `create_*` tracks are verified by the header count.
 
 ### Sounds and placement (0.4.0 and 0.4.1; instrument insert verified live, the rest not yet)
 

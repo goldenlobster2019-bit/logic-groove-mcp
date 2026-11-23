@@ -137,6 +137,19 @@ extension AccessibilityChannel {
         var chosen: FaderStepMethod?
         var steps = 0
         var lastText = startText
+        // Nearest known readings below and above the target (the fader moves in steps, so the target
+        // may lie between two of them).
+        var below: Double?
+        var above: Double?
+        func record(_ reading: Double) {
+            if reading.isFinite == false { return }
+            if reading < target {
+                if below == nil || reading > (below ?? reading) { below = reading }
+            } else if reading > target {
+                if above == nil || reading < (above ?? reading) { above = reading }
+            }
+        }
+        record(level)
         for method in methods {
             let direction = target > level ? 1 : -1
             let probe = AXLogicProElements.stepFaderBatch(master: master, method: method, direction: direction, target: target, maxSteps: 1)
@@ -149,6 +162,7 @@ extension AccessibilityChannel {
             let moved = direction > 0 ? newLevel > level + 0.001 : newLevel < level - 0.001
             trace.append("probe \(method.label) \(direction > 0 ? "up" : "down"): \(String(format: "%.1f", level)) -> \(probe.lastText ?? "?") (\(moved ? "moved" : "no move in the wanted direction"))")
             level = newLevel
+            record(newLevel)
             if let text = probe.lastText { lastText = text }
             if moved {
                 chosen = method
@@ -170,6 +184,7 @@ extension AccessibilityChannel {
                 let wanted = diff > 0 ? 1 : -1
                 if wanted != direction {
                     reversals += 1
+                    if reversals >= 2, below != nil, above != nil { stop = "between steps"; break }
                     if reversals > 4 { stop = "too many reversals"; break }
                     direction = wanted
                 }
@@ -177,7 +192,7 @@ extension AccessibilityChannel {
                     master: master, method: method, direction: direction, target: target, maxSteps: Swift.min(12, 700 - steps))
                 steps += batch.steps
                 if let text = batch.lastText { lastText = text }
-                if let newLevel = batch.level { level = newLevel }
+                if let newLevel = batch.level { level = newLevel; record(newLevel) }
                 if batch.stop == "unreadable" || batch.stop == "failed" {
                     stop = batch.stop
                     break
@@ -201,8 +216,27 @@ extension AccessibilityChannel {
         }
 
         // 4. Final read-back.
-        let finalText = AXLogicProElements.faderLevelText(master: master)
-        let finalDb = finalText.flatMap { ComposeSupport.parseDecibels($0) }
+        var finalText = AXLogicProElements.faderLevelText(master: master)
+        var finalDb = finalText.flatMap { ComposeSupport.parseDecibels($0) }
+
+        // 4b. The target lies between two fader steps: go to the nearer of the two known readings.
+        if stop == "between steps" || stop == "too many reversals",
+           let lowReading = below, let highReading = above, highReading > lowReading, let method = chosen {
+            let nearer = ComposeSupport.nearestStep(target: target, lower: lowReading, upper: highReading)
+            if let nowDb = finalDb, abs(nowDb - nearer) > 0.15 {
+                let fixDirection = nearer > nowDb ? 1 : -1
+                let fix = AXLogicProElements.stepFaderBatch(
+                    master: master, method: method, direction: fixDirection, target: nearer, maxSteps: 2)
+                steps += fix.steps
+                guard await FilePanelAutomation.pause(ms: 200) else { return .error("Cancelled") }
+                finalText = AXLogicProElements.faderLevelText(master: master)
+                finalDb = finalText.flatMap { ComposeSupport.parseDecibels($0) }
+                trace.append("target between steps (\(lowReading) / \(highReading) dB); moved toward the nearer one")
+            }
+            if let reached = finalDb, abs(reached - nearer) <= 0.3 {
+                return .success("\(label) volume: the fader moves in steps there; nearest step '\(finalText ?? "?")' for target \(target) dB (start '\(startText)', \(steps) step(s)). Trace: \(traceText())")
+            }
+        }
         let methodText = chosen.map { $0.label } ?? stop
         let summary = "\(label) volume: target \(target) dB, now '\(finalText ?? "?")' (start '\(startText)', method \(methodText), \(steps) step(s))"
         if let finalDb, abs(finalDb - target) <= 0.3 {

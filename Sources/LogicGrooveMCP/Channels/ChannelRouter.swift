@@ -12,8 +12,8 @@ actor ChannelRouter {
     /// Operations are prefixed by category (e.g., "transport.play", "track.mute").
     private static let routingTable: [String: [ChannelID]] = [
         // Transport — MMC via CoreMIDI, fallback to keyboard, then AppleScript
-        "transport.play":             [.coreMIDI, .cgEvent, .appleScript],
-        "transport.stop":             [.coreMIDI, .cgEvent, .appleScript],
+        "transport.play":             [.accessibility, .cgEvent, .coreMIDI, .appleScript],
+        "transport.stop":             [.accessibility, .cgEvent, .coreMIDI, .appleScript],
         "transport.record":           [.coreMIDI, .cgEvent, .appleScript],
         "transport.pause":            [.coreMIDI, .cgEvent, .appleScript],
         "transport.rewind":           [.coreMIDI, .cgEvent],
@@ -32,10 +32,10 @@ actor ChannelRouter {
 
         // Track mutation — AX click / Track menu, fallback to keyboard
         "track.select":               [.accessibility, .cgEvent],
-        "track.create_audio":         [.accessibility, .cgEvent],
-        "track.create_instrument":    [.accessibility, .cgEvent],
-        "track.create_drummer":       [.accessibility, .cgEvent],
-        "track.create_external_midi": [.accessibility, .cgEvent],
+        "track.create_audio":         [.accessibility],
+        "track.create_instrument":    [.accessibility],
+        "track.create_drummer":       [.accessibility],
+        "track.create_external_midi": [.accessibility],
         "track.delete":               [.accessibility],
         "track.rename":               [.accessibility],
         "track.set_mute":             [.accessibility, .cgEvent],
@@ -117,7 +117,7 @@ actor ChannelRouter {
         "project.save_as":            [.appleScript],
         "project.close":              [.cgEvent, .appleScript],
         "project.get_info":           [.accessibility],
-        "project.bounce":             [.cgEvent, .accessibility],
+        "project.bounce":             [.accessibility],
         "project.is_running":         [],  // No channel needed — pure process check
 
         // Views — keyboard toggle
@@ -142,12 +142,23 @@ actor ChannelRouter {
 
         // Sounds — verified instrument check for logic_sounds set_preset
         "sound.prepare_instrument":   [.accessibility],
+        "sound.verify":               [.accessibility],
 
         // Plugins
         "plugin.list":                [.accessibility],
         "plugin.insert":              [.accessibility],
         "plugin.bypass":              [.accessibility],
         "plugin.remove":              [.accessibility],
+        "plugin.open":                [.accessibility],
+        "plugin.close":               [.accessibility],
+        "plugin.setting_get":         [.accessibility],
+        "plugin.setting_set":         [.accessibility],
+        "plugin.settings_menu":       [.accessibility],
+        "plugin.popups":              [.accessibility],
+        "plugin.popup_set":           [.accessibility],
+        "plugin.params":              [.accessibility],
+        "plugin.param_set":           [.accessibility],
+        "plugin.debug":               [.accessibility],
 
         // Automation
         "automation.get_mode":        [.accessibility],

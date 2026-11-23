@@ -313,16 +313,19 @@ logic_compose("write", {
 })
 ```
 
-## Sounds: Diva presets
+## Sounds: Diva presets and Logic plug-ins
 
-Presets of u-he synths (default `Diva`) are chosen with `logic_sounds`, never by clicking in the plug-in. The synth loads up to 128 presets from its `MIDI Programs` folder when Logic starts (alphabetical, the first file is program 0) and selects them by Program Change.
+Presets of u-he synths (default `Diva`) come from the synth's `MIDI Programs` bank (up to 128 presets, loaded when Logic starts, alphabetical, the first file is program 0). A LIVE Program Change does NOT reach the plug-in, so a preset is loaded by a Program Change inside the part's region: put `program: N` on the clip you write with `logic_compose("write", ...)`. `logic_sounds("set_preset")` sends nothing; it only returns the program number.
 
-1. Browse with `logic_sounds("folders")` and `logic_sounds("presets", { "query": "bass", "limit": 20 })` (filters `folder`, `category`).
-2. Install a bank once: `logic_sounds("bank_install", { "presets": ["HS Stabz", "MK Bass Sub Tri", "IW Lush PWM Pad"] })`, then tell the user to QUIT AND REOPEN Logic Pro (the synth reads the bank only when the host starts). `logic_sounds("bank")` shows the programs and warns when the bank changed after Logic started.
-3. For each track: `logic_mixer("insert_plugin", { "track": 2, "slot": "instrument", "name": "Diva" })`, then `logic_sounds("set_preset", { "track": 2, "preset": "HS Stabz" })`. `verified: false` means the Program Change was sent but the plug-in display cannot be read: say so and ask the user to listen.
-4. Drums for house and dub techno: build them from the synth's percussive presets, ONE VOICE PER TRACK (kick, hats, clap), each written as pitched notes with `logic_compose("write", ...)`; the Ultrabeat init kit does not sound like house drums.
-5. `at_bar` means "bar 1 of the clip goes here": the server adds the clip's leading empty bars itself (Logic drops them), so a clip whose notes start at bar 9 and is imported with `at_bar: 1` plays from bar 9. Read `leading_empty_bars` and `region_start_bar` in the result.
-6. `logic_tracks` `mute`, `solo`, `rename` and `delete` now read their result back; `delete` needs `index`. `set_volume {db}` steps the fader and can take several seconds.
+1. Browse: `logic_sounds("presets", { "query": "bass", "limit": 20 })` returns compact text (`shown/total`, then `name | folder | categories | program N`); `logic_sounds("preset_info", { "preset": "HS Top Hat" })` returns description and usage, which say how the preset is meant to be played (which key). Read it for drum presets instead of guessing.
+2. Install a bank once: `logic_sounds("bank_install", { "presets": [...] })`, then tell the user to QUIT AND REOPEN Logic Pro. `logic_sounds("bank")` lists `program  name`.
+3. For each part: import the clip with `program: N`, then `logic_mixer("insert_plugin", { "track": 2, "slot": "instrument", "name": "Diva" })`. Check with `logic_sounds("verify", { "track": 2, "preset": "HS Stabz" })`: the track name must read like `0/29 029 HS Stabz` and `matches` must be true. The patch Logic picked from the Program Change brings its own effects: bypass the unwanted ones with `bypass_plugin`.
+4. Drums: use Logic's own Drum Synth, ONE INSTANCE PER DRUM. `insert_plugin` "Drum Synth" on a new track, then `logic_mixer("set_plugin_popup", { "index": 0, "value": "Kicks" })` for the sound category (Kicks, Snares and Claps, Percussion, Hats and Cymbals) and `{ "index": 1, "value": "Heavy Kick" }` for the sound module. Read `plugin_popups` to see the current values. Diva percussion presets and the Ultrabeat init kit are thin for house.
+5. Settings of Logic plug-ins: `logic_mixer("plugin_settings_menu", { "plugin": "Tape Delay" })` lists the settings menu (add `path` for a submenu); `set_plugin_setting { "plugin": "Tape Delay", "setting": "Dub Delays/Dub Echo" }` chooses one and verifies the pop-up value. When an item is not found the error lists the titles of that menu level.
+6. Parameters: `plugin_params { "plugin": "Tape Delay", "filter": "feedback" }` switches the window to the Controls view and lists `index | label | value | raw (min..max) | flags`; `set_plugin_param { "plugin": "Tape Delay", "param": "Feedback", "value": 40 }` sets it and reads the displayed value back (slider AXValue, text field, then AXIncrement / AXDecrement). The Controls view has not been inspected live: if something fails, run `logic_system("debug_plugin", { "plugin": "Tape Delay" })` and read the structure.
+7. Analyse the audio instead of working blind: `logic_project("bounce", { })` exports the project (best effort; set the cycle with `cycle_to_regions` first because the range is not applied) and returns the file path. The result carries a step trace; on an error read it.
+8. `at_bar` means "bar 1 of the clip goes here": the server adds the clip's leading empty bars itself (Logic drops them). Read `leading_empty_bars` and `region_start_bar`.
+9. `logic_tracks` `mute`, `solo`, `rename` and `delete` read their result back; `delete` needs `index`. `create_*` tracks are verified by the header count. `set_volume {db}` steps the fader and accepts the nearest step when the fader moves in steps (below about -12 dB). Logic's "additional content" download prompt is cancelled automatically (the trace says so).
 
 ## Sounds and placement
 
