@@ -2,7 +2,7 @@
 
 ## Purpose
 
-MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write electronic music parts (house, deep house, dub techno). Fork of koltyj/logic-pro-mcp (MIT, Kolton Jacobs), renamed and extended by Golden Lobster Studio (Sorin Gheorghita). Repo: https://github.com/goldenlobster2019-bit/logic-groove-mcp. Version 0.4.1.
+MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write electronic music parts (house, deep house, dub techno). Fork of koltyj/logic-pro-mcp (MIT, Kolton Jacobs), renamed and extended by Golden Lobster Studio (Sorin Gheorghita). Repo: https://github.com/goldenlobster2019-bit/logic-groove-mcp. Version 0.4.2.
 
 ## Structure
 
@@ -12,6 +12,8 @@ MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write elec
   - `Theory.swift` - note names, scales, chord building, chord naming.
   - `MIDIFileIO.swift` - Standard MIDI File reader/writer (tempo meta only when passed; Program Change and controller events written and read back).
   - `Analyzer.swift` - key, chord and onset-grid analysis of a Clip.
+  - `PresetLibrary.swift` - u-he preset library (`*.h2p`): meta parser, recursive scan, search, resolve, the `MIDI Programs` bank (read, install with an ownership manifest, program lookup). FileManager only, tested with temp folders.
+  - `ClipTrim.swift` - `Clip.leadingEmptyBars`, `trimmingLeadingEmptyBars()`, `MIDIFileContents.leadingEmptyBars`.
   - `ClipWriter.swift` - free-form clip builder for `logic_compose write`: JSON spec (notes, chords, step patterns, `kit`, `program`, `cc` lanes) to a Clip; chord symbol parser, voicings, drum name tables (gm, ultrabeat_init), swing/humanize, warnings.
   - `Generators/Generator.swift` - public API (generate, complement, styles), request resolution, style catalogue.
   - `Generators/DubTechno.swift`, `House.swift` - per genre/part pattern builders (house and deep_house share House.swift).
@@ -19,9 +21,9 @@ MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write elec
 - `Sources/LogicGrooveMCP/` - macOS-only server.
   - `main.swift` - entry, `--check-permissions`.
   - `Server/` - `LogicProServer.swift` (tool/resource registration, class name kept from upstream), `ServerConfig.swift` (name, ports, timeouts, MIDI port names).
-  - `Dispatchers/` - one file per MCP tool (transport, tracks, mixer, midi, edit, navigate, project, compose, system).
+  - `Dispatchers/` - one file per MCP tool (transport, tracks, mixer, midi, edit, navigate, project, compose, sounds, system). `SoundDispatcher.swift` = `logic_sounds`.
   - `Channels/` - `Channel.swift` (protocol, ChannelID, ChannelResult), `ChannelRouter.swift` (routing table), CoreMIDI, Accessibility (+Compose: import/export, verified track selection, plug-in insert; +Placement: region move to an existing track, cycle to regions), CGEvent, AppleScript, OSC channels, `FilePanelAutomation.swift` (open/save panel driving).
-  - `Accessibility/` - AX wrappers; `AXLogicProElements+Compose.swift` holds menu/panel/inspector/plugin finders; `AXLogicProElements+Tracks.swift` holds selection read-back, focus, window-set and strip diagnostics; `AXLogicProElements+Strip.swift` holds the structural strip reader (model, slot press, bypass, faders); `AXLogicProElements+ImportPanel.swift` holds the "Where:" / browser readers; `Channels/AccessibilityChannel+Strip.swift` holds strip, bypass and dB volume commands.
+  - `Accessibility/` - AX wrappers; `AXLogicProElements+Compose.swift` holds menu/panel/inspector/plugin finders; `AXLogicProElements+Tracks.swift` holds selection read-back, focus, window-set and strip diagnostics; `AXLogicProElements+Strip.swift` holds the structural strip reader (model, slot press, bypass, faders); `AXLogicProElements+ImportPanel.swift` holds the "Where:" / browser readers; `Channels/AccessibilityChannel+Strip.swift` holds strip, bypass and dB volume commands. `Channels/AccessibilityChannel+Tracks.swift` holds the verified mute/solo/rename/delete, `Accessibility/AXLogicProElements+TrackControls.swift` their AX readers (toggle state, header name, transport Play state, alert button, header dump); `Channels/AccessibilityChannel+Sounds.swift` holds `sound.prepare_instrument`.
   - `MIDI/`, `OSC/` - CoreMIDI engine and MMC, UDP OSC client/server.
   - `State/` - cache, models, adaptive poller. `Resources/` - 7 MCP resources.
   - `Utilities/` - `StripModel.swift` (Sendable strip model, slot request parsing), `ComposeSupport.swift` (folders, file names, positions, path validation), input validation, logging, permissions, process utils.
@@ -42,7 +44,7 @@ MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write elec
 
 ## Build and test
 
-- This environment is Linux: `export PATH=/opt/swift/swift-6.0.3-RELEASE-ubuntu24.04/usr/bin:$PATH && swift test` runs MusicCore tests only (107 tests at last run).
+- This environment is Linux: `export PATH=/opt/swift/swift-6.0.3-RELEASE-ubuntu24.04/usr/bin:$PATH && swift test` runs MusicCore tests only (126 tests at last run).
 - Accessibility must be re-granted after each rebuild unless the binary is signed with a stable identity (an Apple Development certificate or a self-signed "Logic Groove Signing" certificate; `Scripts/install-local.sh` picks either).
 - The AX/CGEvent/CoreMIDI code cannot be compiled on Linux. macOS CI (`macos-15`, `swift build -c release` + `swift test`) is the only compile check. Push and read CI before trusting server changes.
 - CI also runs a Linux job in the `swift:6.0` container.
@@ -77,6 +79,14 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
     - New `logic_mixer` commands: `strip` (JSON model), `bypass_plugin` (rewritten: bypass checkbox, pressed only when the state differs, read back), `set_volume {db}` and `set_master_volume {db}` (bisection on the fader's AXValue, at most 14 steps, read back from the level text title; `ComposeSupport.parseDecibels`). Old `value` forms are unchanged. Routed as `mixer.strip`, `mixer.set_volume_db`, `mixer.set_master_volume_db`, `plugin.bypass`; implemented in `Channels/AccessibilityChannel+Strip.swift`.
     - Import: strategy A only when the panel exposes AXRow/AXCell with string values; new strategy K (keyboard, no typing: "Where:" pop-up equals the staging folder name and the folder holds exactly one entry; AXFocused on the column browser, Right, then Down, then Import if enabled and the folder is unchanged); strategy B (Go to sheet) now pastes the path first (NSPasteboard saved and restored, Cmd+A, Cmd+V, read back), then at most 2 typed attempts; every failed attempt notes the focus afterwards. Fixes the live failure where typing left the focus outside the Go to field.
     - Version 0.4.1.
+
+12. Version 0.4.2 (`87706bb` MusicCore, `622fdeb` server; macOS CI green; FIRST LIVE TEST PENDING for everything below):
+    - `logic_sounds` (new tool): `folders`, `presets {query, folder, category, limit}`, `bank`, `bank_install {presets, mode: replace|append}`, `set_preset {track, preset|program}`. Presets of u-he synths (default plug-in "Diva") are read from `/Library/Audio/Presets/u-he/<plugin>` and `~/Library/Audio/Presets/u-he/<plugin>`; `bank_install` copies up to 128 of them into `<local root>/MIDI Programs` as `NNN name.h2p` (ownership manifest `~/Music/LogicGrooveMCP/<plugin>-bank.json`; files the server did not write are never touched). The synth loads that folder only when the host starts, so Logic must be restarted after every bank change (`bank` and `set_preset` warn when the bank is newer than Logic's launch date). `set_preset` selects the track (read back), requires the instrument name to contain the plug-in name, sends Bank Select CC 0 = 0 and a Program Change through the virtual MIDI source, then compares the track header name before/after (`verified` only when the name contains the preset name).
+    - Import position: `at_bar` now means "bar 1 of the clip". Server-built clips are written without their leading empty bars and imported at `at_bar + leading_empty_bars`; `import_midi` reads the file to count them. Results carry `leading_empty_bars` and `region_start_bar`. Playback is stopped before the Go To Position (transport Play checkbox read live).
+    - `logic_tracks` mute/solo/rename/delete rewritten with read-back (`AccessibilityChannel+Tracks.swift`): AXPress first, then verified selection + Logic frontmost + key (M, S, Shift+Return, Cmd+Delete). `delete` requires `index`, presses "Delete" on the confirmation alert and succeeds only when the header count drops by one. `track.delete` is routed to accessibility only.
+    - `set_volume {db}` / `set_master_volume {db}`: stepped search (AXIncrement/AXDecrement, then AXValue deltas, then the level text field) with read-back, caps 700 steps / 25 s; integer `db` accepted (`InputValidation.looseDouble`).
+    - Placement uses Cmd+X / Cmd+V key events after `ensureFrontmost()`; the cut guard ("Cut" in the Undo title) stays, the paste must show "Paste".
+    - Project window test accepts "<name> - Tracks" (unsaved projects). `logic_edit` shortcuts go through the HID tap after a frontmost check. `logic_system debug_header {track}`.
 
 ## Verified on a real Mac (Logic Pro 11, 2026-10-18)
 
@@ -172,6 +182,8 @@ BROKEN / LEARNED (to fix in 0.4.2):
 - Live test 2026-11-22 (Logic Pro 11): File > Import > MIDI File... opens a window (AXWindow, subrole AXDialog, title "Import", buttons Cancel and Import) whose content is hosted out of process; it opens in the last used folder and Import is disabled until a file is selected. The old flow (Cmd+Shift+G, Cmd+A, type, Return) closed the panel without importing anything while reporting `unverified`. Import now returns a trace and is `.error` unless the track count or the Edit menu Undo title changed.
 - Live runs 2026-11-22 (0.3.1 flow): the Go to typing landed once and failed twice (field had 0 chars) when the field was pre-filled with the previous path; the Go to sheet remembers the last path system-wide. Return on an empty or mismatched field closes the whole panel without importing. File rows are not exposed through AX in column view (`AXBrowser` > empty `AXScrollArea`s), so `selectFileInPanel` cannot work there. The Edit menu Undo title flips between "Can't Undo" and "Undo" without any import and is not usable as a signal. The Go To Position dialog check works. Logic creates a new track named after the default patch for every imported MIDI file and asks a tempo question that is answered "No".
 
+- 0.4.2 assumptions, all unverified: Logic passes a Program Change from the virtual MIDI source (and from a region) to the instrument plug-in of the selected track; Diva renames the track when a program loads (only basis for `verified: true` in `set_preset`); `/Library/Audio/Presets/u-he/Diva/MIDI Programs` is writable by the user; Shift+Return opens the inline track name editor; plain M / S toggle mute / solo of the selected track; Cmd+Delete deletes the selected track and the confirmation alert has "Delete" and "Cancel" buttons; the Undo title contains "Cut" / "Paste" after Cmd+X / Cmd+V; the fader slider offers AXIncrement / AXDecrement; the header toggle AXValue reads as number, "1" or "true"; Logic counts only NOTES when it drops leading empty bars (a CC or Program Change at tick 0 with later notes is untested).
+- If Program Change does not reach Diva in Logic, plan B is driving Diva's own preset browser from the server (clicks inside the plug-in window only).
 - Menu titles are matched in English (Logic Pro 11); other languages or versions untested.
 - File panels in a sandboxed Logic (Cmd+Shift+G go-to-folder, save name field, replace alert) are unverified.
 - Go To Position expects the format `N.1.1.1`; result is `.unverified`, so import placement at the playhead is not read back.
@@ -195,6 +207,11 @@ BROKEN / LEARNED (to fix in 0.4.2):
 - Levels are read from the strip's peak meter titles (`logic_mixer strip`); after building a loop, bring the master peak below 0 dB with `set_volume {db}`.
 - A plug-in is never inserted unless the target track selection was read back.
 
+- Synth presets are chosen without the plug-in UI: a curated bank in the synth's `MIDI Programs` folder plus a live Program Change on the verified-selected track (the preset is then saved with the project). `program` inside a clip is kept for special cases only, because it reloads the preset every time the cycle passes the region start.
+- The server only ever removes or overwrites bank files it wrote itself (manifest); foreign presets in `MIDI Programs` stay.
+- `at_bar` is the position of bar 1 of the clip, not of the first note.
+- House / dub techno drums are built from the synth's percussive presets, one voice per track (kick, hats, clap), written as pitched notes; the Ultrabeat init kit is not good enough (user feedback 2026-11-23).
+- Track mute/rename/delete count as done only after a read-back; `delete` never runs without an explicit index and a verified selection.
 - Never use Space for stop/play; use keypad 0 / Enter style keys (and MMC first).
 - Track creation goes through Track menu items first, keyboard as fallback.
 - Every mutating compose/plugin result carries `undo_label` (Edit menu Undo title) for verification; `edit.last_undo` reads it without pressing anything.
