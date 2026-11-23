@@ -134,6 +134,19 @@ BROKEN (to fix in 0.4.2):
 - `logic_edit` shortcuts (cut, paste, ...) are posted without bringing Logic to the front first.
 - Still missing: choosing a Diva preset without its custom UI (every new Diva instance plays the init sound), and setting plug-in parameters.
 
+## Verified on a real Mac (Logic Pro 11, 2026-11-23 late morning, 0.4.1, first full track built with MCP tools only)
+
+WORKS:
+- Five imports in a row (drums, sub, stab, pad, ping; 64-bar clips) each followed by `insert_plugin` on the instrument slot (Ultrabeat, ES M, Diva, ES E, EFM1), `insert_plugin` of a new effect (Tape Delay) and `bypass_plugin` (ChromaVerb): every call succeeded. Strategy K failed every time (Import stayed disabled), strategy B with the matching prefill did the work.
+- `analyze_region` right after an import exports the freshly imported (still selected) region. The exported file keeps the ABSOLUTE project position (a 52-bar region at bar 20 analyzed as 71 bars), so it can be used to read back where a region landed.
+
+BROKEN / LEARNED (to fix in 0.4.2):
+- Logic drops the leading empty bars of an imported MIDI file: the region starts at the bar of the first note and THAT bar is put at the playhead. A clip whose notes start at bar 9 imported with `at_bar: 1` plays from bar 1. All parts of the test track therefore start at bar 1 and the planned build-up (sub from 9, stab from 17, ping from 25) and the aligned break are lost. Fix: the dispatcher must add the clip's leading empty bars to `at_bar` (ClipWriter knows the first note tick), and say so in the result.
+- One import with `at_bar: 9` landed at bar 20 although Go To Position reported 9.1.1.1 (the playhead showed 20 afterwards; the user may have been playing back). The playhead position must be read back right before the Import button is pressed.
+- `logic_tracks rename` and `logic_tracks mute` return success and change nothing (headers keep "Studio Grand", the M button stays off). `logic_tracks delete` selects through the unverified `track.select` and then posts Cmd+Delete: it can delete the wrong track, do not use it until it goes through `selectTrackVerified`.
+- The `state` cache is stale for the transport position and track names; only `live` values are trustworthy.
+- User feedback on the result: the sounds are the problem, not the notes. He wants Diva on every part where it fits, with real house / electronic presets (not init sounds), and drums that sound like house drums (the Ultrabeat init kit does not). Preset selection (Diva, drum kit) is now the top priority, ahead of placement.
+
 ## Sound assignment, learned by hand on 2026-11-22 (not yet in the server)
 
 - `logic_mixer insert_plugin` FAILS on the instrument slot: "Could not open the slot menu (neither AXShowMenu nor AXPress worked on AXButton[title=, desc=list])". An AXPress on that same `list` button from another tool does open the menu, so the press works but the server does not find the opened menu.
