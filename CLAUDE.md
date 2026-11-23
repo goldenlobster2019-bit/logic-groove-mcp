@@ -232,6 +232,33 @@ TO FIX / OPEN:
 - Logic's GM patch for program 34 is "Punchy Bottom" (Bass Amp, Compressor, ChromaGlow, Phat FX, Limiter): replace slots 1-2 with Tape Delay and ChromaVerb, bypass ChromaGlow and Phat FX. Program 44 gives "Romance Strings" (Channel EQ, Chorus), 42 "Cellos" (Channel EQ).
 - An import stops the user's playback (`stopped_playback.was_playing: true`): he was listening while the rework ran. Warn before importing while he listens.
 
+## Reference analysis and third track (2026-11-23 evening, 0.4.3)
+
+User: "find a dub techno track online that you can analyse and reproduce something that exists; what you made so far does not sound like dub techno".
+
+Reference: Callejas - "Paramo 2 (Brendon Moeller Dub Remix)", Monofonicos Netlabel MNF041, archive.org item `MNF041_Callejas--Paramo`, CC BY-SA 4.0 (adaptations allowed with credit and the same licence). Analysed in the cloud container with librosa (archive.org is reachable there). Measured:
+- 130.0 BPM, 192 bars + a 20 s delay/reverb tail. Structure: 1-54 kick + pad (no hats), 55-64 break, 65-126 full groove with hats, 127-144 break, 145-192 full groove. The low band and the hat band do not change by 0.1 dB inside a section: completely static, only the mid range moves.
+- There is NO bassline, NO clap and NO bright stab. The low end is one long 808-like kick: click, pitch sweep from about 500 Hz down, sub tail of about 2 sixteenths at 58-60 Hz (Bb0 in Logic naming). What looked like a bass note and a chord stab in the first analysis pass was the kick's tail and its sweep: check the spectrogram of two bars before naming parts.
+- Hats: soft 8th notes, off-beat louder than on-beat, about 25 dB under the kick, only from bar 65.
+- Harmony: sustained, dark pad G3 Ab3 C4 Eb4 G4 (Abmaj7, Logic names G3 G#3 C4 D#4 G4) over the Bb of the kick; a Bb2 tone swells in and out for 2-6 bars; F4 and higher notes join in the breaks. Scale Eb major / Bb mixolydian.
+- Mid range (700-2500 Hz): quiet echo ticks on the 16th grid (dotted-8th delay), about 23 dB under the kick, growing from bar 33.
+- Balance relative to the total RMS: below 60 Hz -7 dB, 60-150 Hz -3, 150-500 -15, 500-2k -20, 2k-6k -27, above 6k -28. Very dark. Peak 0 dB, RMS -10.8 dB.
+
+Built from that (new "Untitled" project, 130 BPM, 192 bars; tracks 0-based): 0 empty default track; 1 Kick = Drum Synth "Kicks/Long Tailed" (Tone raised to 22 %), C1 four-on-the-floor in the three groove sections, patch effects bypassed, fader 0, peak -5.2 dB; 2 Hat = Drum Synth "Smooth Hi-Hat" 8ths (65-123, 145-192), fader -23, peak -31.6; 3 Drone = Diva "HS Quatermass 1" (program 71, MW = cutoff, CC 1 ramps), Bb2 swells, ChromaVerb "Synth Reverbs/Big, Long, and Distant" wet 50, fader -16; 4 Ticks = Diva "HS Plucksoft" (38), short C4 Eb4 G4 hits on off-beats, Tape Delay "1\8 Note Dotted Dub" (feedback raw 125, high cut raw 84) + ChromaVerb wet 55, fader -28; 5 Pad = Diva "FMR Juno 68 Space Sound 2" (70), the Abmaj7 cluster for all 192 bars, ChromaVerb wet 60, fader -16, peak -18. Master peak -4.2 dB at bar 97-101. Tuning of the Drum Synth kick against Bb is NOT verified (no bounce yet).
+
+Learned in this run:
+- `logic_transport set_tempo` reports success and changes nothing. The control bar has an `AXSlider` titled "Tempo"; every AXValue write moves it by +1 BPM whatever value is written (same behaviour as the faders). 120 -> 130 was done with ten writes. Fix: step it with read-back.
+- Logic (trial) opens with an untitled AXDialog "Logic Pro Trial will expire after N days" (buttons Buy / OK) and nothing works until it is closed. The server has no command for it; the user closed it. Never press Buy.
+- `logic_project launch` works. After this restart the bank programs 53-74 load (Sound7, plus the five added today: 70 FMR Juno 68 Space Sound 2, 71 HS Quatermass 1, 72 HS Air Machine, 73 CHORD Blue Moon, 74 House Chord). Bank = 75 programs.
+- Overlapping notes of the same pitch kill a pad: the first note's note-off silences the retriggered note for its whole length (pad peak -57 dB). Sustained parts must be written back to back without overlap; staggering the retrigger bar per chord tone hides the seams. ClipWriter should warn about same-pitch overlaps.
+- `logic_compose write` cannot leave arrangement gaps in a tiled pattern, so the 192-bar parts were generated as .mid files in the cloud container, copied into `.build/ref-track/mid/` of the user's folder and imported with `import_midi {path, at_bar}` (file trimmed to its first sounding bar, Program Change at tick 0 of the file). A per-clip `active_bars` / sections option would keep this inside the server.
+- Imported files without a Program Change get "Studio Grand" (Channel EQ, Compressor, ChromaVerb); program 70 "Bassoon Solo" and 71 "Clarinet Solo" (Sampler + Channel EQ), 38 "Pulse Bass" (ES2 + Channel EQ, DirMix, Delay D, Limiter).
+- A strip peak read in the first seconds of a slow-attack pad shows silence; read it after 8 bars. The pad at fader 0 peaked at -2.7 dB and clipped the master (+1.2): set pad faders BEFORE the first playback.
+- Fader steps below -18 dB are 5 dB (-18, -23, -28).
+- `bank_install` returns the whole bank as pretty JSON (about 400 lines): needs the compact output too.
+- The user works in Logic while the agent does: playback started by the agent was stopped twice and the selection changed. Announce playback, keep it short.
+- Background screenshots of Logic (`computer_app_screenshot` on com.apple.logic10) need a fresh access grant after every Claude restart; ask once at the start of a session.
+
 ## Sound design notes (web research 2026-11-23, after the user called the first Diva track "a joke")
 
 User constraints: no purchases. Logic's stock plug-ins plus the Diva DEMO (it adds vinyl-like crackles now and then, says its own notice); free extras are welcome when linked. Installed by the user on 2026-11-23: Sound7 "Free House Vol. 1" for Diva (folder `SOUND7 - Free House Vol. 1`: 10 "CHORD - Ians ..." one-key chord presets, 4 basses, 2 pads, leads, arps, FX; bank programs 53-69) and Valhalla Supermassive + Freq Echo (free AU reverb / delay).
