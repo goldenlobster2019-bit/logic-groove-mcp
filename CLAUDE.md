@@ -225,6 +225,13 @@ TO FIX / OPEN:
 - The Sound7 chord presets (programs 53-69) and the Valhalla plug-ins need a Logic restart before they can be used; this track uses programs 0-52 only.
 - Each plug-in window command opens and closes the window, visible to the user; batch several changes with `keep_open`.
 
+## User feedback on the second track (2026-11-23, 16:47) and the rework
+
+- Feedback: "the stabs are wrong; dub techno is more ambient, atmospheric sounds, more pads". A bright, dry, percussive stab (Diva "HS Stabz") is NOT what he means by a dub chord. Default for this user: soft, dark chord hits washed in dotted delay and long reverb, several pad layers, drums kept back.
+- Rework in the same project (tracks 0-based): 5 old HS Stabz track MUTED (`logic_tracks mute` works: "Mute is now on (key command)"); 7 "Dub Chord" = Diva TUC Hurlitzer Soft (program 34), rootless Gm9 (A#2 D3 F3 A3), sparse off-beat hits, Tape Delay "1\8 Note Dotted Dub" (wet 48) + ChromaVerb "Big, Long, and Distant" (wet 45), fader 0; 6 pad IW Lush PWM Pad raised to -10 with the same reverb; 8 "Atmo Pad" = Diva BS Deep Space Diva (44), high sustained D4 G4 A4 / D4 F4 A#4, reverb, -14; 9 "Drone" = Diva IW Cosy Jupiter Pad (42), G2 + D3 held 16 bars, -14; hat -18, clap -16. Peaks at bar 41: chord -11.6 dB, master -3.4 dB.
+- Logic's GM patch for program 34 is "Punchy Bottom" (Bass Amp, Compressor, ChromaGlow, Phat FX, Limiter): replace slots 1-2 with Tape Delay and ChromaVerb, bypass ChromaGlow and Phat FX. Program 44 gives "Romance Strings" (Channel EQ, Chorus), 42 "Cellos" (Channel EQ).
+- An import stops the user's playback (`stopped_playback.was_playing: true`): he was listening while the rework ran. Warn before importing while he listens.
+
 ## Sound design notes (web research 2026-11-23, after the user called the first Diva track "a joke")
 
 User constraints: no purchases. Logic's stock plug-ins plus the Diva DEMO (it adds vinyl-like crackles now and then, says its own notice); free extras are welcome when linked. Installed by the user on 2026-11-23: Sound7 "Free House Vol. 1" for Diva (folder `SOUND7 - Free House Vol. 1`: 10 "CHORD - Ians ..." one-key chord presets, 4 basses, 2 pads, leads, arps, FX; bank programs 53-69) and Valhalla Supermassive + Freq Echo (free AU reverb / delay).
