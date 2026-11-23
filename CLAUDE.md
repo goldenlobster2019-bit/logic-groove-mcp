@@ -157,6 +157,20 @@ BROKEN / LEARNED (to fix in 0.4.2):
 - The `state` cache is stale for the transport position and track names; only `live` values are trustworthy.
 - User feedback on the result: the sounds are the problem, not the notes. He wants Diva on every part where it fits, with real house / electronic presets (not init sounds), and drums that sound like house drums (the Ultrabeat init kit does not). Preset selection (Diva, drum kit) is now the top priority, ahead of placement.
 
+## Verified on a real Mac (Logic Pro 11, 2026-11-23 afternoon, 0.4.2, bank setup only)
+
+WORKS:
+- `logic_sounds folders`: 1432 Diva presets found under `/Library/Audio/Presets/u-he/Diva` (factory folders `1 BASS`, `2 LEAD`, `3 POLY SYNTH`, `4 DREAM SYNTH`, `5 PERCUSSIVE`, `6 RHYTHMIC`, `7 EFFECTS`, `8 TEMPLATES`, 75 files in the root, and `THIRD PARTY/<pack>`).
+- `logic_sounds presets` with `query`, `folder`, `category`: meta is parsed (author, categories such as "Drums:Kicks", "Bass:Sub", "Pads:Analogue", features, character).
+- `logic_sounds bank_install` (replace, 53 presets given as "folder/name"): all copied as `000 ...` to `052 ...` into `/Library/Audio/Presets/u-he/Diva/MIDI Programs`; the folder IS writable by the user, no foreign files.
+- Bank layout chosen: 0-5 kicks (BS Dust Kick, BS The Drop, BS Big Droplet, 3EE_Perc_BD, IW Mini Bass Drum, TH Dirty Base Drum), 6-7 hats (HS Top Hat, 3EE_Perc_HH), 8-9 claps (HS Slapercussion, FMR JunoJupiter 72 Perc Sound 2), 10-11 snares, 12-13 kits (HS Kit 3 analog, HS Kit 2 electro), 14-18 percussion, 19-28 basses (19 MK Bass Sub Tri, 20 HS Boomer, 21 TUC Deep Click, 22 SG Dub Mogul, ...), 29-40 stabs / chords / keys / plucks (29 HS Stabz, 33 MK Late Night, 34 TUC Hurlitzer Soft, 37 MK Organ Relaxed, ...), 41-47 pads (41 IW Lush PWM Pad, 42 IW Cosy Jupiter Pad, ...), 48-51 bells, 52 XS Galaxy Dub.
+
+TO IMPROVE:
+- `presets` output is far too verbose for an agent (pretty-printed JSON with empty arrays, about 12 lines per preset; listing 270 presets cost a large share of the context). Add a compact mode (one line per preset: `name | folder | categories`) and make it the default; keep full meta behind `meta: true`.
+- `query` matches substrings of every field, so "hat" matches "Phat" (738 hits). Match whole words for the meta fields, or search names only unless asked.
+- Diva has very few real drum presets: one hi-hat (HS Top Hat) plus 3EE_Perc_HH, two claps. House drums from Diva alone will be thin; a second drum source (Logic sound library download, or a sample kit) is still worth adding.
+- Still untested: `set_preset` (does the Program Change reach Diva?), everything else in 0.4.2.
+
 ## Sound assignment, learned by hand on 2026-11-22 (not yet in the server)
 
 - `logic_mixer insert_plugin` FAILS on the instrument slot: "Could not open the slot menu (neither AXShowMenu nor AXPress worked on AXButton[title=, desc=list])". An AXPress on that same `list` button from another tool does open the menu, so the press works but the server does not find the opened menu.
