@@ -31,7 +31,16 @@ fi
 
 echo "Building (release) in $PROJECT_DIR ..."
 cd "$PROJECT_DIR"
-swift build -c release
+# The build output is also written to .build/install.log so a failed build can be read afterwards.
+LOG="$PROJECT_DIR/.build/install.log"
+mkdir -p "$PROJECT_DIR/.build"
+echo "build started $(date)" > "$LOG"
+if ! swift build -c release 2>&1 | tee -a "$LOG"; then
+    echo "BUILD FAILED" >> "$LOG"
+    echo "ERROR: the build failed. The previously installed version stays in place. Log: $LOG"
+    exit 1
+fi
+echo "BUILD OK $(date)" >> "$LOG"
 BUILT="$PROJECT_DIR/.build/release/$BINARY_NAME"
 [[ -f "$BUILT" ]] || { echo "ERROR: build finished but $BUILT is missing"; exit 1; }
 
