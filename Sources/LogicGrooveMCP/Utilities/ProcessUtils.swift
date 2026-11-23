@@ -36,6 +36,11 @@ enum ProcessUtils {
         return "first process whose unix id is \(app.processIdentifier)"
     }
 
+    /// When the running Logic Pro process was launched (nil when it is not running or the date is unknown).
+    static func logicProLaunchDate() -> Date? {
+        logicProApp()?.launchDate
+    }
+
     /// Whether Logic Pro is currently running.
     static var isLogicProRunning: Bool {
         logicProApp() != nil

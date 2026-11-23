@@ -30,6 +30,33 @@ struct FaderInfo: Sendable {
     let settable: Bool
 }
 
+/// How a fader is moved one step at a time.
+enum FaderStepMethod: Sendable, Equatable {
+    /// AXIncrement / AXDecrement actions of the slider.
+    case action
+    /// AXValue set to the current raw value plus / minus this delta.
+    case delta(Double)
+
+    var label: String {
+        switch self {
+        case .action: return "AXIncrement/AXDecrement"
+        case .delta(let value): return "AXValue +/-\(Int(value))"
+        }
+    }
+}
+
+/// Result of a synchronous batch of fader steps. Sendable only.
+struct FaderBatchOutcome: Sendable {
+    let steps: Int
+    let firstText: String?
+    let lastText: String?
+    /// Last parsed level in dB (nil when unreadable).
+    let level: Double?
+    /// "target" (within 0.15 dB), "crossed" (passed the target), "stalled" (the level text did not change),
+    /// "unreadable", "failed" (the step call failed) or "limit" (maxSteps reached).
+    let stop: String
+}
+
 /// Structural reader of the Inspector channel strip: the selected track's layout item and the
 /// Stereo Out item. Everything is found again by structure (roles and AX descriptions), never by
 /// position among all buttons. All synchronous; AX elements never leave these functions.
@@ -312,5 +339,107 @@ extension AXLogicProElements {
     static func faderLevelText(master: Bool) -> String? {
         guard let found = faderSlider(master: master) else { return nil }
         return levelText(in: found.all)
+    }
+
+    // MARK: - Fader stepping
+
+    private static func readLevelText(_ field: AXUIElement) -> String? {
+        if let title = AXHelpers.getTitle(field), let text = ComposeSupport.textAfterFirstComma(title) { return text }
+        if let value = stringValue(of: field), !value.isEmpty { return value }
+        return nil
+    }
+
+    /// Names of the AX actions of the volume fader slider.
+    static func faderActionNames(master: Bool) -> [String] {
+        guard let found = faderSlider(master: master) else { return [] }
+        var names: CFArray?
+        if AXUIElementCopyActionNames(found.slider, &names) == .success, let list = names as? [String] {
+            return list
+        }
+        return []
+    }
+
+    private static func stepFader(slider: AXUIElement, method: FaderStepMethod, direction: Int) -> Bool {
+        switch method {
+        case .action:
+            let action = direction > 0 ? kAXIncrementAction : kAXDecrementAction
+            return AXUIElementPerformAction(slider, action as CFString) == .success
+        case .delta(let delta):
+            guard let raw = number(slider) else { return false }
+            let minValue: NSNumber? = AXHelpers.getAttribute(slider, kAXMinValueAttribute)
+            let maxValue: NSNumber? = AXHelpers.getAttribute(slider, kAXMaxValueAttribute)
+            let low = minValue?.doubleValue ?? 0
+            let high = maxValue?.doubleValue ?? 233
+            let next = Swift.max(low, Swift.min(high, raw + Double(direction) * delta))
+            return AXHelpers.setAttribute(slider, kAXValueAttribute, NSNumber(value: next))
+        }
+    }
+
+    /// Up to `maxSteps` fader steps in `direction` (+1 up, -1 down), reading the level text after each
+    /// one (15 ms after the step; up to 3 more 30 ms polls while the text has not changed yet). Stops
+    /// when the level is within 0.15 dB of `target`, has crossed it, did not change, or is unreadable.
+    /// Elements are looked up once and never leave this synchronous function.
+    static func stepFaderBatch(
+        master: Bool, method: FaderStepMethod, direction: Int, target: Double, maxSteps: Int
+    ) -> FaderBatchOutcome {
+        guard let found = faderSlider(master: master),
+              let field = firstElement(in: found.all, role: nil, description: "volume fader level") else {
+            return FaderBatchOutcome(steps: 0, firstText: nil, lastText: nil, level: nil, stop: "unreadable")
+        }
+        var previousText = readLevelText(field)
+        var firstText: String?
+        var lastText = previousText
+        var level = previousText.flatMap { ComposeSupport.parseDecibels($0) }
+        var steps = 0
+        while steps < maxSteps {
+            guard stepFader(slider: found.slider, method: method, direction: direction) else {
+                return FaderBatchOutcome(steps: steps, firstText: firstText, lastText: lastText, level: level, stop: "failed")
+            }
+            steps += 1
+            usleep(15_000)
+            var text = readLevelText(field)
+            var retries = 0
+            while text == previousText && retries < 3 {
+                usleep(30_000)
+                text = readLevelText(field)
+                retries += 1
+            }
+            if text == previousText {
+                return FaderBatchOutcome(steps: steps, firstText: firstText, lastText: lastText, level: level, stop: "stalled")
+            }
+            guard let readText = text, let parsed = ComposeSupport.parseDecibels(readText) else {
+                return FaderBatchOutcome(steps: steps, firstText: firstText, lastText: text, level: nil, stop: "unreadable")
+            }
+            previousText = readText
+            lastText = readText
+            level = parsed
+            if firstText == nil { firstText = readText }
+            if abs(target - parsed) <= 0.15 {
+                return FaderBatchOutcome(steps: steps, firstText: firstText, lastText: lastText, level: level, stop: "target")
+            }
+            if (direction > 0 && parsed > target) || (direction < 0 && parsed < target) {
+                return FaderBatchOutcome(steps: steps, firstText: firstText, lastText: lastText, level: level, stop: "crossed")
+            }
+        }
+        return FaderBatchOutcome(steps: steps, firstText: firstText, lastText: lastText, level: level, stop: "limit")
+    }
+
+    /// Whether the level text field of the fader reports AXValue as settable.
+    static func faderLevelFieldSettable(master: Bool) -> Bool {
+        guard let found = faderSlider(master: master),
+              let field = firstElement(in: found.all, role: nil, description: "volume fader level") else { return false }
+        return isSettable(field, kAXValueAttribute)
+    }
+
+    /// Write `text` into the fader's level text field and send AXConfirm when the field offers it.
+    /// Returns (value write ok, confirm ok).
+    static func setFaderLevelText(master: Bool, text: String) -> (set: Bool, confirmed: Bool) {
+        guard let found = faderSlider(master: master),
+              let field = firstElement(in: found.all, role: nil, description: "volume fader level") else {
+            return (false, false)
+        }
+        let written = AXHelpers.setAttribute(field, kAXValueAttribute, text as CFTypeRef)
+        let confirmed = AXHelpers.performAction(field, kAXConfirmAction)
+        return (written, confirmed)
     }
 }

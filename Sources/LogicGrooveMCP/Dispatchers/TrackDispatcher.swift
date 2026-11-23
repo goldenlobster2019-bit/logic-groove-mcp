@@ -10,11 +10,16 @@ struct TrackDispatcher {
             create_external_midi, delete, duplicate, rename, mute, solo, arm, set_color. \
             Params by command: \
             select -> { index: Int } or { name: String }; \
-            rename -> { index: Int, name: String }; \
-            mute/solo/arm -> { index: Int, enabled: Bool }; \
+            rename -> { index: Int, name: String (1-80 characters) } (verified: reads the header name back; tries the header \
+            field, then selects the track and uses the Rename key command; error with a step trace when the name does not change); \
+            mute/solo -> { index: Int, enabled: Bool } (verified: reads the header's M / S state, presses it, falls back to the \
+            key M / S on the verified selected track; success only when the read-back matches); \
+            arm -> { index: Int, enabled: Bool }; \
             set_color -> { index: Int, color: Int } (Logic color index 0-24); \
             create_* -> {} (creates at current position); \
-            delete/duplicate -> { index: Int }
+            delete -> { index: Int } (REQUIRED; selects the track with read-back, posts Cmd+Delete, confirms Logic's alert, \
+            success only when the track count dropped by exactly one); \
+            duplicate -> { index: Int }
             """,
         inputSchema: .object([
             "type": .string("object"),
@@ -40,7 +45,7 @@ struct TrackDispatcher {
     ) async -> CallTool.Result {
         switch command {
         case "select":
-            if let index = params["index"]?.intValue {
+            if let index = InputValidation.looseInt(params["index"]) {
                 let result = await router.route(
                     operation: "track.select",
                     params: ["index": String(index)]
@@ -78,20 +83,18 @@ struct TrackDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "delete":
-            if let index = params["index"]?.intValue {
-                let result = await router.route(
-                    operation: "track.select",
-                    params: ["index": String(index)]
-                )
-                guard result.isSuccess else {
-                    return CallTool.Result(content: [.text(result.message)], isError: true)
-                }
+            // The index is required: the channel selects the track with read-back before it deletes.
+            guard let index = InputValidation.looseInt(params["index"]) else {
+                return CallTool.Result(content: [.text("delete requires 'index' (0-based); nothing was deleted")], isError: true)
             }
-            let result = await router.route(operation: "track.delete")
+            let result = await router.route(
+                operation: "track.delete",
+                params: ["index": String(index)]
+            )
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "duplicate":
-            if let index = params["index"]?.intValue {
+            if let index = InputValidation.looseInt(params["index"]) {
                 let selectResult = await router.route(
                     operation: "track.select",
                     params: ["index": String(index)]
@@ -104,7 +107,9 @@ struct TrackDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "rename":
-            let index = params["index"]?.intValue ?? 0
+            guard let index = InputValidation.looseInt(params["index"]) else {
+                return CallTool.Result(content: [.text("rename requires 'index' (0-based) and 'name'")], isError: true)
+            }
             let name = params["name"]?.stringValue ?? ""
             let result = await router.route(
                 operation: "track.rename",
@@ -113,25 +118,29 @@ struct TrackDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "mute":
-            let index = params["index"]?.intValue ?? 0
+            guard let index = InputValidation.looseInt(params["index"]) else {
+                return CallTool.Result(content: [.text("mute requires 'index' (0-based)")], isError: true)
+            }
             let enabled = params["enabled"]?.boolValue ?? true
             let result = await router.route(
                 operation: "track.set_mute",
-                params: ["index": String(index), "muted": String(enabled)]
+                params: ["index": String(index), "enabled": String(enabled)]
             )
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "solo":
-            let index = params["index"]?.intValue ?? 0
+            guard let index = InputValidation.looseInt(params["index"]) else {
+                return CallTool.Result(content: [.text("solo requires 'index' (0-based)")], isError: true)
+            }
             let enabled = params["enabled"]?.boolValue ?? true
             let result = await router.route(
                 operation: "track.set_solo",
-                params: ["index": String(index), "soloed": String(enabled)]
+                params: ["index": String(index), "enabled": String(enabled)]
             )
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "arm":
-            let index = params["index"]?.intValue ?? 0
+            let index = InputValidation.looseInt(params["index"]) ?? 0
             let enabled = params["enabled"]?.boolValue ?? true
             let result = await router.route(
                 operation: "track.set_arm",
@@ -140,8 +149,8 @@ struct TrackDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "set_color":
-            let index = params["index"]?.intValue ?? 0
-            let color = params["color"]?.intValue ?? 0
+            let index = InputValidation.looseInt(params["index"]) ?? 0
+            let color = InputValidation.looseInt(params["color"]) ?? 0
             let result = await router.route(
                 operation: "track.set_color",
                 params: ["index": String(index), "color": String(color)]

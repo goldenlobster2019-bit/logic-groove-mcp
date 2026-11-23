@@ -7,6 +7,27 @@ enum Validation<Success> {
 }
 
 enum InputValidation {
+    /// A JSON number as Double: accepts .double, .int and numeric strings (an integer such as -6 is
+    /// delivered as .int, which `doubleValue` alone does not convert).
+    static func looseDouble(_ value: Value?) -> Double? {
+        guard let value else { return nil }
+        if let number = value.doubleValue { return number }
+        if let number = value.intValue { return Double(number) }
+        if let text = value.stringValue { return Double(text.trimmingCharacters(in: .whitespaces)) }
+        return nil
+    }
+
+    /// A JSON number as Int: accepts .int, whole .double values and integer strings.
+    static func looseInt(_ value: Value?) -> Int? {
+        guard let value else { return nil }
+        if let number = value.intValue { return number }
+        if let number = value.doubleValue, number.isFinite, number == number.rounded(), abs(number) < 1e15 {
+            return Int(number)
+        }
+        if let text = value.stringValue { return Int(text.trimmingCharacters(in: .whitespaces)) }
+        return nil
+    }
+
     static func int(
         _ params: [String: Value],
         keys: [String],

@@ -60,14 +60,15 @@ logic_edit("last_undo", {})
 | Tool | Purpose | Example |
 |------|---------|---------|
 | `logic_compose` | styles, generate, write, analyze_region, analyze_file, complement, import_midi, set_loop | `logic_compose("generate", {genre: "house", part: "bass"})` |
+| `logic_sounds` | folders, presets, bank, bank_install, set_preset (u-he presets such as Diva without the plug-in UI) | `logic_sounds("set_preset", {track: 2, preset: "HS Stabz"})` |
 | `logic_transport` | play, stop, record, set_tempo, goto_position, cycle_to_regions... | `logic_transport("set_tempo", {tempo: 124})` |
-| `logic_tracks` | select, create_audio, create_instrument, mute, solo, arm, rename... | `logic_tracks("mute", {index: 2, enabled: true})` |
+| `logic_tracks` | select, create_*, delete, mute, solo, arm, rename (mute, solo, rename and delete are verified by read-back) | `logic_tracks("mute", {index: 2, enabled: true})` |
 | `logic_mixer` | strip, set_volume, set_pan, insert_plugin, bypass_plugin... | `logic_mixer("insert_plugin", {track: 2, slot: "instrument", name: "Diva"})` |
 | `logic_midi` | send_note, send_cc, send_chord, MMC | `logic_midi("send_note", {note: 60, velocity: 100, channel: 1, duration_ms: 500})` |
 | `logic_edit` | undo, redo, cut, copy, paste, quantize, split, last_undo | `logic_edit("quantize", {value: "1/16"})` |
 | `logic_navigate` | goto_bar, markers, toggle_view, refresh_editor, open_piano_roll | `logic_navigate("goto_bar", {bar: 9})` |
 | `logic_project` | new, open, save, bounce, launch, quit | `logic_project("open", {path: "/path/to/song.logicx"})` |
-| `logic_system` | health, permissions, refresh_cache, state, debug_panel, debug_strip, debug_focus, help | `logic_system("help", {category: "compose"})` |
+| `logic_system` | health, permissions, refresh_cache, state, debug_panel, debug_strip, debug_header, debug_focus, help | `logic_system("help", {category: "compose"})` |
 
 Prefer `logic_system("state")` for reading project, transport, tracks, regions and live AX facts (track count, Undo title, open panels): MCP resources are not reachable from every client. Resources (read-only): `logic://transport/state`, `logic://tracks`, `logic://tracks/{index}`, `logic://mixer`, `logic://project/info`, `logic://midi/ports`, `logic://system/health`.
 
@@ -112,6 +113,16 @@ Deep house and house currently share the same pattern generators; they differ in
 | `cc` | `[{ cc, points: [{ pos or step, value }], curve?, resolution? }]`: controller lanes, for example a mod wheel (CC 1) sweep (0.4.0) |
 | `import`, `at_bar`, `loop`, `tempo`, `track` | As for `generate` |
 
+### Sounds: Diva presets
+
+`logic_sounds` chooses presets of u-he synths (default plug-in `Diva`, param `plugin` for another) without touching the plug-in's custom-drawn UI. The synth loads up to 128 presets from its `MIDI Programs` folder (`/Library/Audio/Presets/u-he/<plugin>/MIDI Programs`, alphabetical, the first file is program 0) when the host starts and selects them by MIDI Program Change.
+
+1. Browse: `logic_sounds("folders")` and `logic_sounds("presets", {query: "bass", limit: 20})` (also `folder`, `category`, `meta`).
+2. Install a bank once: `logic_sounds("bank_install", {presets: ["HS Stabz", "MK Bass Sub Tri", "IW Lush PWM Pad"]})` (`mode` `"replace"` default or `"append"`; names, `folder/name` or absolute paths inside the preset folders; all references are resolved first and nothing is written if one fails). The folder must be writable by your user (Finder > Get Info > Sharing & Permissions). Then QUIT AND REOPEN Logic Pro: the synth reads `MIDI Programs` only when the host starts. `logic_sounds("bank")` lists the installed programs and warns when the bank changed after Logic was launched.
+3. Per track: `logic_mixer("insert_plugin", {track: 2, slot: "instrument", name: "Diva"})`, then `logic_sounds("set_preset", {track: 2, preset: "HS Stabz"})` (or `program: 0-127`, `channel: 1-16`). The track is selected with read-back, the instrument must be the plug-in, Bank Select CC 0 = 0 and the Program Change are sent, and the track name is read back (`verified` is true only when it now contains the preset name; otherwise the Program Change was sent but the plug-in display cannot be read through Accessibility).
+
+Drums for house and dub techno are built from the synth's percussive presets, one voice per track (kick, hats, clap), each written as pitched notes with `logic_compose("write", ...)`.
+
 ### Sounds and placement (0.4.0 and 0.4.1; instrument insert verified live, the rest not yet)
 
 - `kit: "ultrabeat_init"` maps drum names to Ultrabeat's init kit instead of GM: `kick`/`bd` C#1 (37), `snare`/`sd` D1 (38), `closed_hat`/`ch`/`hh`/`hat` D#1 (39), `open_hat`/`oh`/`hat2` E1 (40), toms F1 (41), `clap`/`cp` F#1 (42), `rim`/`perc`/`cowbell`/`clave`/congas/`tamb` G1 (43), `shaker`/`pedal_hat` G#1 (44). `ride`, `ride_bell` and `crash` have no voice and are an error.
@@ -121,7 +132,9 @@ Deep house and house currently share the same pattern generators; they differ in
 - `logic_mixer("insert_plugin", {track, slot?, name, result_index?, variant_index?})`: `slot` is `"instrument"` / 0 for the instrument, `"new"` / `"add"` / `"append"` (default) to add an effect in the empty slot, or n >= 1 to replace the n-th existing effect (top to bottom). The track is selected and read back first; if that fails nothing is changed. The plug-in is chosen with the keyboard in the slot menu's search field and confirmed by the new plug-in window and by the channel strip structure; the message ends with `chain: <instrument> | <effects>`.
 - `logic_mixer("strip", {track?})`: JSON of the channel strip read through Accessibility (instrument and effects with bypass state, volume text, peak text, clipping, Stereo Out volume and peak). Call it after building a loop and bring levels down when the master peak is above 0 dB.
 - `logic_mixer("bypass_plugin", {track?, plugin? | slot?, bypassed})`: presses the bypass checkbox only when the state differs, read back. `slot` 0 is the instrument, n the n-th effect.
-- `logic_mixer("set_volume", {track?, db})` and `logic_mixer("set_master_volume", {db})`: the fader is searched until the read-back level is within 0.15 dB (success within 0.3 dB). The old `value` 0.0-1.0 form still works.
+- `logic_mixer("set_volume", {track?, db})` and `logic_mixer("set_master_volume", {db})` (0.4.2): the fader is moved one step at a time (AXIncrement / AXDecrement, else AXValue +/- 1, 2, 5, 10, else the level text field) and the level text is read back after every step until it is within 0.15 dB (success within 0.3 dB; up to 700 steps or 25 s). `db` may be an integer. The old `value` 0.0-1.0 form still works.
+- `at_bar` (0.4.2) means "bar 1 of the clip goes here". Logic drops the leading empty bars of an imported MIDI file and puts the bar of the first note at the playhead, so the server writes the clip without its leading empty bars and goes to `at_bar` plus the number of leading empty bars (`import_midi` reads the file to count them). The result shows `leading_empty_bars` and `region_start_bar`. A playing Logic is stopped first.
+- `logic_tracks` (0.4.2): `mute`, `solo`, `rename` and `delete` read their result back (`delete` needs `index` and succeeds only when the track count dropped by one); `logic_system("debug_header", {track})` dumps a track header's AX subtree.
 - `logic_transport("cycle_to_regions")` selects all regions and sets and enables the cycle over them.
 - `logic_system("debug_panel", {window, max_lines})` and `logic_system("debug_strip")` dump AX trees for diagnosing slot and window problems.
 
@@ -485,7 +498,7 @@ The server never clicks at screen coordinates, with one exception added in 0.4.0
 ## Architecture
 
 ```
-Claude ── 9 dispatcher tools ──┐
+Claude ── 10 dispatcher tools ─┐
        └─ 7 resources ─────────┤
                                ▼
         Dispatchers ──► ChannelRouter ──► CoreMIDI | Accessibility | CGEvent | AppleScript | OSC

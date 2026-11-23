@@ -69,17 +69,16 @@ extension AccessibilityChannel {
         var trace: [String] = []
         func traceText() -> String { trace.joined(separator: "; ") }
 
-        // 1. Cut the selected (imported) region.
-        let cutPath = ["Edit", "Cut"]
-        let cut = AXLogicProElements.pressMenu(cutPath)
-        guard case .pressed = cut else {
-            return .error("Could not cut the region: \(Self.menuFailure(cut, path: cutPath)). The region stays on the new track \(newIndex)")
+        // 1. Cut the selected (imported) region with the key command: the Edit > Cut menu item pressed
+        // through Accessibility did not cut (live test), and key commands only work while Logic is frontmost.
+        guard FilePanelAutomation.postKeyGlobal(7, flags: .maskCommand) else {
+            return .error("Could not post Cmd+X. The region stays on the new track \(newIndex)")
         }
-        trace.append("Edit > Cut pressed")
-        guard await FilePanelAutomation.pause(ms: 300) else { return .error("Cancelled") }
+        trace.append("posted Cmd+X")
+        guard await FilePanelAutomation.pause(ms: 400) else { return .error("Cancelled") }
         // Confirm the cut before anything is deleted or pasted: if it silently did nothing,
         // deleting the temporary track would lose the region and Paste would insert stale
-        // clipboard content. The Edit menu then reads "Undo Cut ...".
+        // clipboard content. The Edit menu (read while Logic is frontmost) then reads "Undo Cut ...".
         let undoAfterCut = AXLogicProElements.undoMenuTitle() ?? "none"
         trace.append("undo title after cut '\(undoAfterCut)'")
         guard undoAfterCut.lowercased().contains("cut") else {
@@ -126,7 +125,7 @@ extension AccessibilityChannel {
         return .success("Region cut; track \(target) selected. Trace: \(traceText())")
     }
 
-    /// Phase 2: with the target track selected and the playhead at the wanted bar, paste the region.
+    /// Phase 2: with the target track selected and the playhead at the wanted bar, paste the region (Cmd+V, confirmed by the Undo title).
     /// The target selection is read back again first (and re-selected once when it moved).
     func pasteOnTrack(params: [String: String]) async -> ChannelResult {
         guard let target = Int(params["track"] ?? ""), target >= 0 else {
@@ -146,14 +145,19 @@ extension AccessibilityChannel {
         } else {
             trace.append("track \(target) still selected")
         }
-        let pastePath = ["Edit", "Paste"]
-        let paste = AXLogicProElements.pressMenu(pastePath)
-        guard case .pressed = paste else {
-            return .error("Could not paste: \(Self.menuFailure(paste, path: pastePath)). The region is on the clipboard. Trace: \(trace.joined(separator: "; "))")
+        guard await FilePanelAutomation.ensureFrontmost() else {
+            return .error("Could not bring Logic Pro to the front for the paste; the region is on the clipboard. Trace: \(trace.joined(separator: "; "))")
         }
-        trace.append("Edit > Paste pressed")
-        guard await FilePanelAutomation.pause(ms: 400) else { return .error("Cancelled") }
-        trace.append("undo title now '\(AXLogicProElements.undoMenuTitle() ?? "none")'")
-        return .unverified("Region pasted on track \(target) at bar \(bar) (not read back). Trace: \(trace.joined(separator: "; "))")
+        guard FilePanelAutomation.postKeyGlobal(9, flags: .maskCommand) else {
+            return .error("Could not post Cmd+V. The region is on the clipboard. Trace: \(trace.joined(separator: "; "))")
+        }
+        trace.append("posted Cmd+V")
+        guard await FilePanelAutomation.pause(ms: 500) else { return .error("Cancelled") }
+        let undoAfterPaste = AXLogicProElements.undoMenuTitle() ?? "none"
+        trace.append("undo title after paste '\(undoAfterPaste)'")
+        guard undoAfterPaste.lowercased().contains("paste") else {
+            return .error("The paste was not confirmed (Edit menu shows '\(undoAfterPaste)'); nothing else was done. The region may still be on the clipboard. Trace: \(trace.joined(separator: "; "))")
+        }
+        return .success("Region pasted on track \(target) at bar \(bar) (Edit menu: '\(undoAfterPaste)'). Trace: \(trace.joined(separator: "; "))")
     }
 }

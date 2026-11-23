@@ -33,7 +33,7 @@ struct SystemDispatcher {
         name: "logic_system",
         description: """
             Diagnostics and help for the Logic Groove MCP server. \
-            Commands: health, permissions, refresh_cache, debug_windows, debug_panel, debug_strip, debug_focus, state, help. \
+            Commands: health, permissions, refresh_cache, debug_windows, debug_panel, debug_strip, debug_header, debug_focus, state, help. \
             Params by command: \
             help -> { category: String } (returns full param docs for a dispatcher); \
             refresh_cache -> {} (force AX re-poll); \
@@ -43,6 +43,8 @@ struct SystemDispatcher {
             max_lines?: Int (50-1500, default 300) } (AX subtree dump of the open file panel, or of the focused window); \
             debug_strip -> { max_lines?: Int (50-1500, default 300) } (Inspector channel strip: selected track index, \
             plug-in slot candidates with frames and the AX subtree); \
+            debug_header -> { track: Int (0-based), max_lines?: Int (50-1500, default 300) } (AX subtree dump of that track header \
+            with its mute / solo controls and their values; use it to diagnose logic_tracks mute / solo / rename); \
             debug_focus -> {} (focused element and focused window); \
             Others -> {}
             """,
@@ -119,6 +121,13 @@ struct SystemDispatcher {
             let maxLines = min(max(params["max_lines"]?.intValue ?? 300, 50), 1_500)
             return CallTool.Result(content: [.text(AXLogicProElements.debugStripDump(maxLines: maxLines))], isError: false)
 
+        case "debug_header":
+            guard let track = InputValidation.looseInt(params["track"]), track >= 0 else {
+                return CallTool.Result(content: [.text("debug_header requires 'track' (0-based)")], isError: true)
+            }
+            let maxLines = min(max(InputValidation.looseInt(params["max_lines"]) ?? 300, 50), 1_500)
+            return CallTool.Result(content: [.text(AXLogicProElements.debugHeaderDump(index: track, maxLines: maxLines))], isError: false)
+
         case "debug_focus":
             let focus = AXLogicProElements.focusedFieldSummary() ?? "none"
             let text = "focused element: \(focus)\nfocused window: \(AXLogicProElements.focusedWindowSummary())"
@@ -153,7 +162,7 @@ struct SystemDispatcher {
 
         default:
             return CallTool.Result(
-                content: [.text("Unknown system command: \(command). Available: health, permissions, refresh_cache, debug_windows, debug_panel, debug_strip, debug_focus, state, help")],
+                content: [.text("Unknown system command: \(command). Available: health, permissions, refresh_cache, debug_windows, debug_panel, debug_strip, debug_header, debug_focus, state, help")],
                 isError: true
             )
         }
@@ -192,11 +201,15 @@ struct SystemDispatcher {
                   create_instrument -> {} — New software instrument track
                   create_drummer    -> {} — New Drummer track
                   create_external_midi -> {} — New external MIDI track
-                  delete            -> { index: Int }
+                  delete            -> { index: Int } (REQUIRED) — selects the track with read-back,
+                                       Cmd+Delete, confirms Logic's alert; success only when the
+                                       track count dropped by exactly one
                   duplicate         -> { index: Int }
-                  rename            -> { index: Int, name: String }
-                  mute              -> { index: Int, enabled: Bool }
-                  solo              -> { index: Int, enabled: Bool }
+                  rename            -> { index: Int, name: String (1-80) } — verified: header name read
+                                       back (AX field first, then the Rename key command)
+                  mute              -> { index: Int, enabled: Bool } — verified: header state read
+                                       back (AXPress first, then the key M on the selected track)
+                  solo              -> { index: Int, enabled: Bool } — verified like mute (key S)
                   arm               -> { index: Int, enabled: Bool }
                   set_color         -> { index: Int, color: Int } (0-24)
 
@@ -209,14 +222,15 @@ struct SystemDispatcher {
                   strip             -> { track?: Int } — JSON of the channel strip (instrument and effects
                                        top to bottom with bypass state, volume text, peak text, clipping,
                                        Stereo Out volume and peak). Use it to see levels.
-                  set_volume        -> { track?: Int, db: Float (-60..6) } — fader searched until the
-                                       read-back is within 0.15 dB (success within 0.3 dB);
-                                       old form: { track: Int, value: Float } (0.0-1.0)
+                  set_volume        -> { track?: Int, db: Float or Int (-60..6) } — the fader is STEPPED
+                                       (AXIncrement/AXDecrement, else AXValue +/- 1, 2, 5, 10, else the
+                                       level text) with read-back until within 0.15 dB (success within
+                                       0.3 dB; up to 700 steps / 25 s); old form: { track: Int, value: Float }
                   set_pan           -> { track: Int, value: Float } (-1.0 to 1.0)
                   set_send          -> { track: Int, bus: Int, value: Float }
                   set_output        -> { track: Int, output: String }
                   set_input         -> { track: Int, input: String }
-                  set_master_volume -> { db: Float (-60..6) } (Stereo Out of the Inspector)
+                  set_master_volume -> { db: Float or Int (-60..6) } (Stereo Out, stepped like set_volume)
                                        or old form { value: Float }
                   toggle_eq         -> { track: Int }
                   reset_strip       -> { track: Int }
@@ -306,6 +320,10 @@ struct SystemDispatcher {
                                        loop? (default false), tempo? }
                                        part: drums, kick, hats, bass, stabs, chords, pad.
                                        Seed is always echoed back so a clip can be reproduced.
+                                       at_bar = where BAR 1 OF THE CLIP belongs (Logic drops the leading
+                                       empty bars of an imported file; the server adds them to the
+                                       position). Results show leading_empty_bars and region_start_bar.
+                                       A playing Logic is stopped before the import.
                   write             -> free-form clip from exact notes, chords and step patterns
                                        { name?, bars? (1-256, derived if omitted),
                                          pattern_bars? (1-64; notes/chords are one pattern of this
@@ -367,7 +385,7 @@ struct SystemDispatcher {
                   analyze_region    -> {} — Export the selected MIDI region and analyze it
                   analyze_file      -> { path: String } — Analyze an existing .mid file
                   complement        -> same params as generate; fits the selected region
-                  import_midi       -> { path: String, at_bar?: Int, loop?: Bool, track?: Int }
+                  import_midi       -> { path: String, at_bar?: Int (bar 1 of the file), loop?: Bool, track?: Int }
                   set_loop          -> { enabled: Bool } — Region inspector Loop checkbox
 
                 Verify results by reading logic_system state (track_header_count, undo_title).
@@ -376,6 +394,29 @@ struct SystemDispatcher {
                 Files go to ~/Music/LogicGrooveMCP/Generated; region exports to
                 ~/Music/LogicGrooveMCP/Exports. Import uses File > Import > MIDI File via
                 Accessibility. Results include undo_label (the Edit menu's Undo title).
+                """
+
+        case "sounds":
+            return """
+                logic_sounds commands (u-he synths, default plugin "Diva"; param plugin?: String):
+                  folders           -> {} — Existing preset roots, total, preset folders with counts
+                  presets           -> { query?, folder?, category?, limit? (1-200, default 40), meta? (default true) }
+                                       Browse presets (name, folder, categories, features, character, author;
+                                       `program` when the preset is in the bank)
+                  bank              -> {} — The installed MIDI Programs bank (program, name, file) and
+                                       whether Logic was started after the last bank change
+                  bank_install      -> { presets: [String] (1-128 names, "folder/name" or absolute paths),
+                                       mode?: "replace" (default) | "append" } — all references are resolved
+                                       first (any failure writes nothing). QUIT AND REOPEN LOGIC afterwards:
+                                       the synth reads MIDI Programs only when the host starts.
+                  set_preset        -> { track?: Int (0-based; omit = selected), preset?: String or
+                                       program?: Int (0-127), channel?: Int (1-16) } — selects the track with
+                                       read-back, requires the instrument to be the plug-in, sends Bank
+                                       Select CC 0 = 0 and the Program Change, then reads the track name.
+
+                Workflow: folders / presets, bank_install once, restart Logic, then per track
+                logic_mixer insert_plugin { slot: "instrument", name: "Diva" } and set_preset { track, preset }.
+                The bank folder is /Library/Audio/Presets/u-he/<plugin>/MIDI Programs and must be writable.
                 """
 
         case "project":
@@ -407,10 +448,12 @@ struct SystemDispatcher {
                                        or of the focused window
                   debug_strip       -> { max_lines?: Int } — Inspector channel strip: selected track index,
                                        slot candidates with frames, subtree
+                  debug_header      -> { track: Int, max_lines?: Int } — AX subtree of one track header with
+                                       its mute / solo controls and values
                   debug_focus       -> {} — Focused element and focused window
                   help              -> { category: String } — Param docs per category
 
-                Categories: transport, tracks, mixer, midi, edit, navigate, project, compose, system
+                Categories: transport, tracks, mixer, midi, edit, navigate, project, compose, sounds, system
 
                 Read health via resource: logic://system/health
                 Prefer `state` over resources: MCP resources are not reachable from every client.
@@ -418,7 +461,7 @@ struct SystemDispatcher {
 
         default:
             return """
-                Logic Groove MCP — 9 dispatcher tools + 7 resources
+                Logic Groove MCP — 10 dispatcher tools + 7 resources
 
                 Tools (actions):
                   logic_transport  — Transport control (play, stop, record, tempo...)
@@ -429,6 +472,7 @@ struct SystemDispatcher {
                   logic_navigate   — Navigation + views (markers, zoom, toggle views...)
                   logic_project    — Project lifecycle (open, save, bounce...)
                   logic_compose    — Generate/analyze/import MIDI (house, deep house, dub techno)
+                  logic_sounds     — Diva (u-he) presets through the MIDI Programs bank
                   logic_system     — Diagnostics + help
 
                 Resources (reads — zero tool cost):

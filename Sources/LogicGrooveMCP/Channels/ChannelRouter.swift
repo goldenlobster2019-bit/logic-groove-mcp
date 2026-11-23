@@ -36,7 +36,7 @@ actor ChannelRouter {
         "track.create_instrument":    [.accessibility, .cgEvent],
         "track.create_drummer":       [.accessibility, .cgEvent],
         "track.create_external_midi": [.accessibility, .cgEvent],
-        "track.delete":               [.cgEvent, .accessibility],
+        "track.delete":               [.accessibility],
         "track.rename":               [.accessibility],
         "track.set_mute":             [.accessibility, .cgEvent],
         "track.set_solo":             [.accessibility, .cgEvent],
@@ -139,6 +139,9 @@ actor ChannelRouter {
         "region.set_name":            [.accessibility],
         "region.move":                [.accessibility],
         "region.resize":              [.accessibility],
+
+        // Sounds — verified instrument check for logic_sounds set_preset
+        "sound.prepare_instrument":   [.accessibility],
 
         // Plugins
         "plugin.list":                [.accessibility],

@@ -12,13 +12,13 @@ struct MixerDispatcher {
             strip -> { track?: Int } (JSON of the selected track's channel strip read through Accessibility: \
             instrument and effects top to bottom with bypass state, volume text, peak level text and clipping, \
             Stereo Out volume and peak; call it after building a loop to see levels); \
-            set_volume -> { track?: Int, db: Float (-60 to 6) } (the fader is searched until the read-back level \
-            is within 0.15 dB; success within 0.3 dB) or the old { track: Int, value: Float } (normalized 0.0-1.0); \
+            set_volume -> { track?: Int, db: Float or Int (-60 to 6) } (the fader is STEPPED with read-back from the level text until it \
+            is within 0.15 dB; success within 0.3 dB; may take several seconds; the message names the method and the readings) or the old { track: Int, value: Float } (normalized 0.0-1.0); \
             set_pan -> { track: Int, value: Float } (-1.0 left to +1.0 right); \
             set_send -> { track: Int, bus: Int, value: Float }; \
             set_output -> { track: Int, output: String }; \
             set_input -> { track: Int, input: String }; \
-            set_master_volume -> { db: Float (-60 to 6) } (Stereo Out fader of the Inspector) or the old { value: Float }; \
+            set_master_volume -> { db: Float or Int (-60 to 6) } (Stereo Out fader of the Inspector, stepped like set_volume) or the old { value: Float }; \
             toggle_eq -> { track: Int }; \
             reset_strip -> { track: Int }; \
             insert_plugin -> { track?: Int (0-based; omit = currently selected track), \
@@ -58,21 +58,21 @@ struct MixerDispatcher {
     ) async -> CallTool.Result {
         switch command {
         case "strip":
-            let track = params["track"]?.intValue ?? params["track_index"]?.intValue ?? -1
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["track_index"]) ?? -1
             let result = await router.route(operation: "mixer.strip", params: ["track_index": String(track)])
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "set_volume":
-            if let db = params["db"]?.doubleValue {
-                let track = params["track"]?.intValue ?? params["track_index"]?.intValue ?? -1
+            if let db = InputValidation.looseDouble(params["db"]) {
+                let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["track_index"]) ?? -1
                 let result = await router.route(
                     operation: "mixer.set_volume_db",
                     params: ["track_index": String(track), "db": String(db)]
                 )
                 return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
             }
-            let track = params["track"]?.intValue ?? params["index"]?.intValue ?? 0
-            let value = params["value"]?.doubleValue ?? params["volume"]?.doubleValue ?? 0.0
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["index"]) ?? 0
+            let value = InputValidation.looseDouble(params["value"]) ?? InputValidation.looseDouble(params["volume"]) ?? 0.0
             let result = await router.route(
                 operation: "mixer.set_volume",
                 params: ["index": String(track), "volume": String(value)]
@@ -80,8 +80,8 @@ struct MixerDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "set_pan":
-            let track = params["track"]?.intValue ?? params["index"]?.intValue ?? 0
-            let value = params["value"]?.doubleValue ?? params["pan"]?.doubleValue ?? 0.0
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["index"]) ?? 0
+            let value = InputValidation.looseDouble(params["value"]) ?? InputValidation.looseDouble(params["pan"]) ?? 0.0
             let result = await router.route(
                 operation: "mixer.set_pan",
                 params: ["index": String(track), "pan": String(value)]
@@ -89,9 +89,9 @@ struct MixerDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "set_send":
-            let track = params["track"]?.intValue ?? params["index"]?.intValue ?? 0
-            let bus = params["bus"]?.intValue ?? params["send_index"]?.intValue ?? 0
-            let value = params["value"]?.doubleValue ?? params["level"]?.doubleValue ?? 0.0
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["index"]) ?? 0
+            let bus = InputValidation.looseInt(params["bus"]) ?? InputValidation.looseInt(params["send_index"]) ?? 0
+            let value = InputValidation.looseDouble(params["value"]) ?? InputValidation.looseDouble(params["level"]) ?? 0.0
             let result = await router.route(
                 operation: "mixer.set_send",
                 params: ["index": String(track), "send_index": String(bus), "level": String(value)]
@@ -99,7 +99,7 @@ struct MixerDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "set_output":
-            let track = params["track"]?.intValue ?? params["index"]?.intValue ?? 0
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["index"]) ?? 0
             let output = params["output"]?.stringValue ?? ""
             let result = await router.route(
                 operation: "mixer.set_output",
@@ -108,7 +108,7 @@ struct MixerDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "set_input":
-            let track = params["track"]?.intValue ?? params["index"]?.intValue ?? 0
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["index"]) ?? 0
             let input = params["input"]?.stringValue ?? ""
             let result = await router.route(
                 operation: "mixer.set_input",
@@ -117,11 +117,11 @@ struct MixerDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "set_master_volume":
-            if let db = params["db"]?.doubleValue {
+            if let db = InputValidation.looseDouble(params["db"]) {
                 let result = await router.route(operation: "mixer.set_master_volume_db", params: ["db": String(db)])
                 return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
             }
-            let value = params["value"]?.doubleValue ?? params["volume"]?.doubleValue ?? 0.0
+            let value = InputValidation.looseDouble(params["value"]) ?? InputValidation.looseDouble(params["volume"]) ?? 0.0
             let result = await router.route(
                 operation: "mixer.set_master_volume",
                 params: ["volume": String(value)]
@@ -129,7 +129,7 @@ struct MixerDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "toggle_eq":
-            let track = params["track"]?.intValue ?? params["index"]?.intValue ?? 0
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["index"]) ?? 0
             let result = await router.route(
                 operation: "mixer.toggle_eq",
                 params: ["index": String(track)]
@@ -137,7 +137,7 @@ struct MixerDispatcher {
             return CallTool.Result(content: [.text(result.message)], isError: !result.isSuccess)
 
         case "reset_strip":
-            let track = params["track"]?.intValue ?? params["index"]?.intValue ?? 0
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["index"]) ?? 0
             let result = await router.route(
                 operation: "mixer.reset_strip",
                 params: ["index": String(track)]
@@ -146,15 +146,15 @@ struct MixerDispatcher {
 
         case "insert_plugin":
             // No track -> act on the currently selected track (recommended: select it first).
-            let track = params["track"]?.intValue ?? params["track_index"]?.intValue ?? -1
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["track_index"]) ?? -1
             // slot: "instrument"/0, "new"/"add"/"append" (default when omitted), or n >= 1 (replace the n-th effect).
-            let slot = params["slot"]?.stringValue ?? params["slot"]?.intValue.map { String($0) } ?? "new"
+            let slot = params["slot"]?.stringValue ?? InputValidation.looseInt(params["slot"]).map { String($0) } ?? "new"
             let name = params["name"]?.stringValue ?? params["plugin_name"]?.stringValue ?? ""
             var insertParams = ["track_index": String(track), "plugin_name": name, "slot": slot]
-            if let resultIndex = params["result_index"]?.intValue {
+            if let resultIndex = InputValidation.looseInt(params["result_index"]) {
                 insertParams["result_index"] = String(resultIndex)
             }
-            if let variantIndex = params["variant_index"]?.intValue {
+            if let variantIndex = InputValidation.looseInt(params["variant_index"]) {
                 insertParams["variant_index"] = String(variantIndex)
             }
             if let closeWindow = params["close_window"]?.boolValue {
@@ -177,12 +177,12 @@ struct MixerDispatcher {
 
         case "bypass_plugin":
             // No track -> act on the currently selected track (recommended: select it first).
-            let track = params["track"]?.intValue ?? params["track_index"]?.intValue ?? -1
+            let track = InputValidation.looseInt(params["track"]) ?? InputValidation.looseInt(params["track_index"]) ?? -1
             let bypassed = params["bypassed"]?.boolValue ?? true
             var bypassParams = ["track_index": String(track), "bypassed": String(bypassed)]
             if let plugin = params["plugin"]?.stringValue ?? params["name"]?.stringValue, !plugin.isEmpty {
                 bypassParams["plugin"] = plugin
-            } else if let slot = params["slot"]?.stringValue ?? params["slot"]?.intValue.map({ String($0) }) {
+            } else if let slot = params["slot"]?.stringValue ?? InputValidation.looseInt(params["slot"]).map({ String($0) }) {
                 bypassParams["slot"] = slot
             }
             let result = await router.route(operation: "plugin.bypass", params: bypassParams)

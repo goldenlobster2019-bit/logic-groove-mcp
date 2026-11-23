@@ -18,7 +18,7 @@ struct ComposeDispatcher {
             bars?: Int (1-64, default 4), style?: String, density?: Float (0-1, default 0.5), \
             swing?: Float (0-1), humanize?: Float (0-1, default 0.2), octave?: Int, seed?: Int \
             (random if omitted, always echoed back), name?: String, import?: Bool (default true), \
-            at_bar?: Int (default 1), loop?: Bool (default false), tempo?: Float (written to the file only if given) }; \
+            at_bar?: Int (default 1: where bar 1 of the clip belongs), loop?: Bool (default false), tempo?: Float (written to the file only if given) }; \
             write -> free-form clip from exact notes, chords and step patterns: \
             { name?, bars?: Int (1-256, derived from content if omitted), pattern_bars?: Int (1-64, notes and chords \
             describe this many bars and are tiled to fill bars), grid?: Int (steps per bar: 4, 8, 12, 16, 24, 32, 48; default 16), \
@@ -31,7 +31,7 @@ struct ComposeDispatcher {
             kit?: "gm"|"ultrabeat_init" (drum name map; default gm), program?: Int (0-127, Program Change at the clip start), \
             cc?: [{ cc: Int (0-127, 1 = mod wheel), points: [{ pos|step, value: Int 0-127 }] (2-512, any order), \
             curve?: "linear"|"step", resolution?: Float (16ths between events, 0.25-4, default 0.5) }] (max 16 lanes, over the whole clip), \
-            import?: Bool (default true), at_bar?: Int (default 1), loop?: Bool (default false), track?: Int, tempo?: Float }. \
+            import?: Bool (default true), at_bar?: Int (default 1: where bar 1 of the clip belongs), loop?: Bool (default false), track?: Int, tempo?: Float }. \
             Syntax: pos is "bar.beat.16th" (1-based, e.g. "2.3.3"; optional 4th field = extra ticks; "bar.beat" and "bar" also work), \
             step is a 0-based index in grid steps (fractions allowed); pitch is a MIDI number, a note name in Logic octaves \
             (C3 = 60, "F1", "Bb2") or a drum name (kick, snare, clap, closed_hat, open_hat, rim, shaker, ...); \
@@ -46,11 +46,15 @@ struct ComposeDispatcher {
             track (generate, write, complement, import_midi) puts the imported clip on an EXISTING track (0-based, same indexing as \
             logic_system state) instead of the new track every import creates: cut, delete the empty new track, select the target \
             (read back), go to at_bar, paste; a region already there is replaced where they overlap. \
+            at_bar (all import paths) means "bar 1 of the clip goes here": Logic drops the leading empty bars of an imported MIDI file and puts \
+            the bar of the FIRST NOTE at the playhead, so the server writes the clip without its leading empty bars and goes to \
+            at_bar + leading_empty_bars before importing (import_midi reads the file to count them). The result shows \
+            leading_empty_bars and region_start_bar (the bar the region starts at). If Logic is playing it is stopped first. \
             The result lists warnings (dropped, shortened or trimmed notes), the note range and an analysis (key, chords) to sanity-check. \
             analyze_region -> {} (exports the selected MIDI region, then analyzes it); \
             analyze_file -> { path: String }; \
             complement -> same params as generate; analyzes the selected region first and generates a part that fits it; \
-            import_midi -> { path: String, at_bar?: Int, loop?: Bool, track?: Int }; \
+            import_midi -> { path: String, at_bar?: Int (bar 1 of the file; the leading empty bars are added), loop?: Bool, track?: Int }; \
             set_loop -> { enabled: Bool } (Region inspector Loop checkbox). \
             Results include undo_label (the Edit menu's Undo title) so you can verify what Logic did.
             """,
@@ -134,11 +138,26 @@ struct ComposeDispatcher {
             } catch {
                 return Self.error("Invalid parameters")
             }
-            let outcome = await performImport(path: path, atBar: atBar, loop: loop, track: track, router: router)
-            return json(
-                .object(["path": .string(path), "import": outcome.value]),
-                isError: !outcome.ok
+            // Logic drops the leading empty bars of the file: read them so at_bar means "bar 1 of the file".
+            var leadingBars = 0
+            var readWarning: String?
+            do {
+                let contents = try MIDIFileIO.read(url: URL(fileURLWithPath: path))
+                leadingBars = contents.leadingEmptyBars
+            } catch {
+                readWarning = "Could not read the MIDI file to count its leading empty bars (\(error)); importing with leading_empty_bars 0"
+            }
+            let outcome = await performImport(
+                path: path, atBar: atBar, leadingBars: leadingBars, loop: loop, track: track, router: router
             )
+            var payload: [String: Value] = [
+                "path": .string(path),
+                "import": outcome.value,
+                "leading_empty_bars": .int(leadingBars),
+            ]
+            if let atBar { payload["region_start_bar"] = .int(atBar + leadingBars) }
+            if let readWarning { payload["warnings"] = .array([.string(readWarning)]) }
+            return json(.object(payload), isError: !outcome.ok)
 
         case "set_loop":
             let enabled = boolParam(params, "enabled", default: true)
@@ -397,15 +416,23 @@ struct ComposeDispatcher {
             clip.name = customName
         }
 
-        // Write the MIDI file.
+        // Write the MIDI file. When it will be imported, its leading empty bars are removed (Logic drops
+        // them and puts the first note's bar at the playhead); the import position adds them back.
         let directory = ComposeSupport.generatedDirectory()
         let baseName = ComposeSupport.sanitizeFileName(
             clip.name, fallback: "\(request.genre.rawValue)-\(request.part.rawValue)"
         )
         let fileURL = directory.appendingPathComponent("\(ComposeSupport.timestamp())-\(baseName).mid")
+        var fileClip = clip
+        var leadingBars = 0
+        if doImport {
+            let trimmed = clip.trimmingLeadingEmptyBars()
+            fileClip = trimmed.clip
+            leadingBars = trimmed.leadingBars
+        }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let data = MIDIFileIO.write(clip: clip, tempoBPM: tempo)
+            let data = MIDIFileIO.write(clip: fileClip, tempoBPM: tempo)
             try data.write(to: fileURL, options: .atomic)
         } catch {
             return Self.error("Failed to write \(fileURL.path): \(error.localizedDescription)")
@@ -449,8 +476,12 @@ struct ComposeDispatcher {
 
         var isFailure = false
         if doImport {
-            let outcome = await performImport(path: fileURL.path, atBar: atBar, loop: loop, track: track, router: router)
+            let outcome = await performImport(
+                path: fileURL.path, atBar: atBar, leadingBars: leadingBars, loop: loop, track: track, router: router
+            )
             result["import"] = outcome.value
+            result["leading_empty_bars"] = .int(leadingBars)
+            result["region_start_bar"] = .int(atBar + leadingBars)
             if !outcome.ok { isFailure = true }
         } else {
             result["import"] = .string("skipped (import=false); use import_midi with the path to import it")
@@ -510,13 +541,20 @@ struct ComposeDispatcher {
         }
         let clip = written.clip
 
-        // Write the MIDI file.
+        // Write the MIDI file (without its leading empty bars when it will be imported: see generateResult).
         let directory = ComposeSupport.generatedDirectory()
         let baseName = ComposeSupport.sanitizeFileName(clip.name, fallback: "written-clip")
         let fileURL = directory.appendingPathComponent("\(ComposeSupport.timestamp())-\(baseName).mid")
+        var fileClip = clip
+        var leadingBars = 0
+        if doImport {
+            let trimmed = clip.trimmingLeadingEmptyBars()
+            fileClip = trimmed.clip
+            leadingBars = trimmed.leadingBars
+        }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let data = MIDIFileIO.write(clip: clip, tempoBPM: tempo)
+            let data = MIDIFileIO.write(clip: fileClip, tempoBPM: tempo)
             try data.write(to: fileURL, options: .atomic)
         } catch {
             return Self.error("Failed to write \(fileURL.path): \(error.localizedDescription)")
@@ -559,8 +597,12 @@ struct ComposeDispatcher {
 
         var isFailure = false
         if doImport {
-            let outcome = await performImport(path: fileURL.path, atBar: atBar, loop: loop, track: track, router: router)
+            let outcome = await performImport(
+                path: fileURL.path, atBar: atBar, leadingBars: leadingBars, loop: loop, track: track, router: router
+            )
             result["import"] = outcome.value
+            result["leading_empty_bars"] = .int(leadingBars)
+            result["region_start_bar"] = .int(atBar + leadingBars)
             if !outcome.ok { isFailure = true }
         } else {
             result["import"] = .string("skipped (import=false); use import_midi with the path to import it")
@@ -570,16 +612,45 @@ struct ComposeDispatcher {
 
     // MARK: - Import
 
-    /// Move the playhead, import the file, optionally put the region on an existing track, optionally
-    /// enable Loop on the region.
+    /// Stop playback when Logic is playing (a playing playhead moves away from the position that was
+    /// just set), using the existing stop operation. Returns a step value, nil when Logic was not playing.
+    private static func stopIfPlaying(router: ChannelRouter) async -> Value? {
+        guard AXLogicProElements.transportIsPlaying() == true else { return nil }
+        let stopped = await router.route(operation: "transport.stop")
+        await pause(400)
+        let stillPlaying = AXLogicProElements.transportIsPlaying()
+        var value: [String: Value] = [
+            "was_playing": .bool(true),
+            "stop": stepValue(stopped),
+            "playing_after": stillPlaying.map { Value.bool($0) } ?? Value.null,
+        ]
+        if stillPlaying == true {
+            value["warning"] = .string("Logic is still playing after the stop command; the import position may be wrong")
+        }
+        return .object(value)
+    }
+
+    /// Stop playback if needed, move the playhead to the import bar, import the file, optionally put the
+    /// region on an existing track, optionally enable Loop on the region.
+    ///
+    /// `atBar` is where bar 1 of the clip belongs; Logic drops the leading empty bars of the file and puts
+    /// the bar of the first note at the playhead, so the playhead goes to `atBar + leadingBars`
+    /// (`leadingBars` is the number of whole empty bars at the start of the file).
     private static func performImport(
         path: String,
         atBar: Int?,
+        leadingBars: Int,
         loop: Bool,
         track: Int? = nil,
         router: ChannelRouter
     ) async -> (ok: Bool, value: Value) {
         var steps: [String: Value] = [:]
+        let regionBar: Int? = atBar.map { $0 + leadingBars }
+        steps["leading_empty_bars"] = .int(leadingBars)
+        steps["region_start_bar"] = regionBar.map { Value.int($0) } ?? Value.null
+        if atBar == nil && leadingBars > 0 {
+            steps["note"] = .string("No at_bar given: the first note lands at the current playhead (the \(leadingBars) leading empty bar(s) of the file are dropped by Logic)")
+        }
 
         // The new track an import creates has index == the track count before the import.
         let tracksBefore = AXLogicProElements.trackHeaderCount()
@@ -594,21 +665,38 @@ struct ComposeDispatcher {
             }
         }
 
-        if let atBar {
+        if let regionBar {
+            if let stopped = await stopIfPlaying(router: router) {
+                steps["stopped_playback"] = stopped
+            }
             let nav = await router.route(
                 operation: "transport.goto_position",
-                params: ["position": "\(atBar).1.1.1"]
+                params: ["position": "\(regionBar).1.1.1"]
             )
             steps["goto_bar"] = stepValue(nav)
             if !nav.isSuccess {
                 return (false, .object(steps))
             }
             await pause(400)
+            // Playback started again (or was started by something else) between the move and the import:
+            // stop it and move the playhead once more.
+            if let stopped = await stopIfPlaying(router: router) {
+                steps["stopped_playback_again"] = stopped
+                let again = await router.route(
+                    operation: "transport.goto_position",
+                    params: ["position": "\(regionBar).1.1.1"]
+                )
+                steps["goto_bar_again"] = stepValue(again)
+                if !again.isSuccess {
+                    return (false, .object(steps))
+                }
+                await pause(400)
+            }
         }
 
         var importParams = ["path": path]
-        if let atBar {
-            importParams["at_bar"] = String(atBar)
+        if let regionBar {
+            importParams["at_bar"] = String(regionBar)
         }
         let imported = await router.route(operation: "midi.import_file", params: importParams)
         steps["import"] = stepValue(imported)
@@ -617,11 +705,11 @@ struct ComposeDispatcher {
         }
 
         if let track {
-            let bar = atBar ?? 1
+            let bar = regionBar ?? 1
             var place: [String: Value] = [:]
             func placeResult(_ ok: Bool, _ message: String) -> (ok: Bool, value: Value) {
                 place["ok"] = .bool(ok)
-                place["status"] = .string(ok ? "unverified" : "error")
+                place["status"] = .string(ok ? "success" : "error")
                 place["message"] = .string(message)
                 steps["place"] = .object(place)
                 return (ok, .object(steps))

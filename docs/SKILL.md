@@ -313,9 +313,20 @@ logic_compose("write", {
 })
 ```
 
+## Sounds: Diva presets
+
+Presets of u-he synths (default `Diva`) are chosen with `logic_sounds`, never by clicking in the plug-in. The synth loads up to 128 presets from its `MIDI Programs` folder when Logic starts (alphabetical, the first file is program 0) and selects them by Program Change.
+
+1. Browse with `logic_sounds("folders")` and `logic_sounds("presets", { "query": "bass", "limit": 20 })` (filters `folder`, `category`).
+2. Install a bank once: `logic_sounds("bank_install", { "presets": ["HS Stabz", "MK Bass Sub Tri", "IW Lush PWM Pad"] })`, then tell the user to QUIT AND REOPEN Logic Pro (the synth reads the bank only when the host starts). `logic_sounds("bank")` shows the programs and warns when the bank changed after Logic started.
+3. For each track: `logic_mixer("insert_plugin", { "track": 2, "slot": "instrument", "name": "Diva" })`, then `logic_sounds("set_preset", { "track": 2, "preset": "HS Stabz" })`. `verified: false` means the Program Change was sent but the plug-in display cannot be read: say so and ask the user to listen.
+4. Drums for house and dub techno: build them from the synth's percussive presets, ONE VOICE PER TRACK (kick, hats, clap), each written as pitched notes with `logic_compose("write", ...)`; the Ultrabeat init kit does not sound like house drums.
+5. `at_bar` means "bar 1 of the clip goes here": the server adds the clip's leading empty bars itself (Logic drops them), so a clip whose notes start at bar 9 and is imported with `at_bar: 1` plays from bar 9. Read `leading_empty_bars` and `region_start_bar` in the result.
+6. `logic_tracks` `mute`, `solo`, `rename` and `delete` now read their result back; `delete` needs `index`. `set_volume {db}` steps the fader and can take several seconds.
+
 ## Sounds and placement
 
-Track placement, `kit`, `program` and `cc` are new in 0.4.0 and plug-in insert is verified for the instrument slot; the structural slots, `strip`, `bypass_plugin` and `set_volume {db}` are new in 0.4.1 and unverified until the next live session: read the step trace in every result, and read `logic_system("state")` before and after each step (track count, track names, windows, undo title).
+Track placement, `kit`, `program` and `cc` are new in 0.4.0 and plug-in insert is verified for the instrument slot; the structural slots, `strip`, `bypass_plugin` and `set_volume {db}` are new in 0.4.1 and unverified (0.4.2 changed `set_volume {db}` to stepping and made placement use Cmd+X / Cmd+V) until the next live session: read the step trace in every result, and read `logic_system("state")` before and after each step (track count, track names, windows, undo title).
 
 - **Put a clip on an existing track**: add `track` (0-based, same indexing as `state`) to `write`, `generate`, `complement` or `import_midi`. The import still creates a new track first; the server then cuts the region, deletes that empty track (only when its selection is read back), selects the target (read back), goes to `at_bar` and pastes. A region already at that position on the target is replaced where they overlap. If the result is an error, the `place` step says where it stopped (the region may be on the new track or on the clipboard).
 - **Insert a plug-in**: `logic_mixer("insert_plugin", { "track": 2, "slot": "instrument", "name": "Diva" })`. `slot` is `"instrument"` (or 0) for the instrument, `"new"` / `"add"` / `"append"` (the default when `slot` is omitted) to ADD an effect in the empty slot (`{ "track": 2, "name": "Tape Delay" }`), or a number n >= 1 to REPLACE the n-th existing effect, top to bottom (`{ "track": 2, "slot": 1, "name": "Tape Delay" }` replaces effect 1; an n beyond the effect count means "new"). The command selects the track and reads the selection back; if that fails it refuses to act. It types the name in the slot menu's search field and presses Down, Right, Return, confirms by the new plug-in window and then by the channel strip structure; the message ends with `chain: <instrument> | <effects>`. Use `result_index` (extra Down presses when the first result is not the one) and `variant_index` (submenu entry; 1 = Stereo) when the default picks the wrong entry. A u-he demo notice lives inside the plug-in window, so closing the window (default) is enough.

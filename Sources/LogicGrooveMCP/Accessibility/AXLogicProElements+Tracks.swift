@@ -88,7 +88,7 @@ extension AXLogicProElements {
         guard let app = appRoot() else { return false }
         let window: AXUIElement? = AXHelpers.getAttribute(app, kAXFocusedWindowAttribute)
         guard let window else { return false }
-        return (AXHelpers.getTitle(window) ?? "").lowercased().contains(".logicx")
+        return isProjectWindowTitle(AXHelpers.getTitle(window) ?? "")
     }
 
     /// nil when arrow keys can safely move the track selection (only the project window is up, no file

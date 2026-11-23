@@ -57,13 +57,15 @@ actor AccessibilityChannel: Channel {
         case "track.select":
             return selectTrack(params: params)
         case "track.set_mute":
-            return setTrackToggle(params: params, button: "Mute")
+            return await setHeaderToggle(params: params, toggle: .mute)
         case "track.set_solo":
-            return setTrackToggle(params: params, button: "Solo")
+            return await setHeaderToggle(params: params, toggle: .solo)
         case "track.set_arm":
             return setTrackToggle(params: params, button: "Record")
         case "track.rename":
-            return renameTrack(params: params)
+            return await renameTrackVerified(params: params)
+        case "track.delete":
+            return await deleteTrackVerified(params: params)
         case "track.set_color":
             return .error("Track color setting not supported via AX")
 
@@ -132,6 +134,10 @@ actor AccessibilityChannel: Channel {
         // MARK: - Track creation (Track menu)
         case "track.create_audio", "track.create_instrument", "track.create_external_midi", "track.create_drummer":
             return await createTrack(operation: operation)
+
+        // MARK: - Sounds
+        case "sound.prepare_instrument":
+            return await prepareInstrumentForSound(params: params)
 
         // MARK: - Plugins
         case "plugin.insert":
@@ -267,21 +273,6 @@ actor AccessibilityChannel: Channel {
             return .error("Failed to click \(buttonName) on track \(index)")
         }
         return .success("{\"track\":\(index),\"toggled\":\"\(buttonName)\"}")
-    }
-
-    private func renameTrack(params: [String: String]) -> ChannelResult {
-        guard let indexStr = params["index"], let index = Int(indexStr),
-              let name = params["name"] else {
-            return .error("Missing 'index' or 'name' parameter")
-        }
-        guard let field = AXLogicProElements.findTrackNameField(trackIndex: index) else {
-            return .error("Cannot find name field for track \(index)")
-        }
-        // Double-click to enter edit mode, then set value
-        AXHelpers.performAction(field, kAXPressAction)
-        AXHelpers.setAttribute(field, kAXValueAttribute, name as CFTypeRef)
-        AXHelpers.performAction(field, kAXConfirmAction)
-        return .success("{\"track\":\(index),\"name\":\"\(name)\"}")
     }
 
     // MARK: - Mixer

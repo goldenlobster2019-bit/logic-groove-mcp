@@ -80,17 +80,24 @@ extension AXLogicProElements {
         for window in allWindows() {
             // Dialogs become AXMainWindow while they are up, so identify the project
             // window by its title instead of skipping "main".
-            if (AXHelpers.getTitle(window) ?? "").lowercased().contains(".logicx") { continue }
+            if isProjectWindowTitle(AXHelpers.getTitle(window) ?? "") { continue }
             result.append(window)
         }
         return result
     }
 
-    /// The project (arrange) window: the window whose title contains ".logicx".
-    /// Falls back to AXMainWindow. Use this instead of mainWindow() for anything that
+    /// Whether a window title belongs to a project window: a saved project ("Name.logicx ...") or an
+    /// unsaved one, whose title reads "Untitled - Tracks" (any title ending in " - Tracks").
+    static func isProjectWindowTitle(_ title: String) -> Bool {
+        let lowered = title.lowercased()
+        return lowered.contains(".logicx") || lowered.hasSuffix(" - tracks")
+    }
+
+    /// The project (arrange) window: the window whose title contains ".logicx" or ends in " - Tracks"
+    /// (unsaved project). Falls back to AXMainWindow. Use this instead of mainWindow() for anything that
     /// lives in the project window, because modal dialogs take over AXMainWindow.
     static func projectWindow() -> AXUIElement? {
-        for window in allWindows() where (AXHelpers.getTitle(window) ?? "").lowercased().contains(".logicx") {
+        for window in allWindows() where isProjectWindowTitle(AXHelpers.getTitle(window) ?? "") {
             return window
         }
         return mainWindow()
@@ -132,7 +139,7 @@ extension AXLogicProElements {
             let sheets = AXHelpers.findAllDescendants(of: window, role: kAXSheetRole, maxDepth: 6)
             if let sheet = sheets.first { return sheet }
             let title = (AXHelpers.getTitle(window) ?? "").lowercased()
-            if title.contains(".logicx") { continue }
+            if isProjectWindowTitle(title) { continue }
             let subrole: String? = AXHelpers.getAttribute(window, kAXSubroleAttribute)
             if subrole == kAXDialogSubrole || subrole == kAXSystemDialogSubrole {
                 return window
@@ -621,7 +628,7 @@ extension AXLogicProElements {
     static func importPanel() -> AXUIElement? {
         for window in dialogCandidates() {
             let title = (AXHelpers.getTitle(window) ?? "").lowercased()
-            if title.contains(".logicx") { continue }
+            if isProjectWindowTitle(title) { continue }
             if title == "import" || looksLikeFilePanel(window) { return window }
         }
         return nil
@@ -648,7 +655,7 @@ extension AXLogicProElements {
         if let panel = importPanel() { return panel }
         for window in dialogCandidates() {
             let title = (AXHelpers.getTitle(window) ?? "").lowercased()
-            if title.contains(".logicx") { continue }
+            if isProjectWindowTitle(title) { continue }
             if title.hasPrefix("save") || title.hasPrefix("export") || title.hasPrefix("open") {
                 return window
             }

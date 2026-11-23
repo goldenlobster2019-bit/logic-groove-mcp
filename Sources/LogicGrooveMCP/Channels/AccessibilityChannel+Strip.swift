@@ -98,8 +98,13 @@ extension AccessibilityChannel {
 
     // MARK: - set_volume / set_master_volume with dB
 
-    /// Bounded bisection on the fader's raw value (at most 14 steps, 120 ms after each set) until the
-    /// level text read-back is within 0.15 dB of `db`. Success within 0.3 dB, otherwise unverified.
+    /// Stepped search with read-back from the level text. Live finding: setting the fader's AXValue to a
+    /// wanted value does not jump (every set moved it about 0.1 dB down), so the fader is moved one step
+    /// at a time. A stepping method is chosen by testing each with ONE step and reading the level back:
+    /// (1) AXIncrement / AXDecrement, (2) AXValue set to the current raw value +/- 1, 2, 5, 10. The chosen
+    /// method is repeated until the level is within 0.15 dB of the target or has crossed it (at most 4
+    /// reversals), with a cap of 700 steps and 25 s. When no method moves the fader the right way and the
+    /// level text field is settable, the text is written instead. Success within 0.3 dB, otherwise error.
     func setFaderDb(params: [String: String], master: Bool) async -> ChannelResult {
         guard let dbText = params["db"], let target = Double(dbText), target.isFinite, (-60.0...6.0).contains(target) else {
             return .error("'db' is required and must be a number between -60 and 6")
@@ -109,57 +114,100 @@ extension AccessibilityChannel {
         if let error = prep.error { return .error(error) }
         var trace = prep.trace
         let label = master ? "Stereo Out" : (AXLogicProElements.stripModel()?.trackName ?? "selected track")
+        func traceText() -> String { trace.joined(separator: "; ") }
 
         guard let info = AXLogicProElements.faderInfo(master: master) else {
-            return .error("Volume fader of \(label) not found in the strip. Trace: \(trace.joined(separator: "; "))")
+            return .error("Volume fader of \(label) not found in the strip. Trace: \(traceText())")
         }
-        guard info.settable else {
-            return .error("The volume fader of \(label) is not settable through Accessibility. Trace: \(trace.joined(separator: "; "))")
+        guard let startText = info.levelText, var level = ComposeSupport.parseDecibels(startText) else {
+            return .error("The level text of the \(label) fader is unreadable ('\(info.levelText ?? "none")'). Trace: \(traceText())")
         }
-        trace.append("fader range \(info.min)...\(info.max), raw \(info.raw), level '\(info.levelText ?? "?")'")
+        let actions = AXLogicProElements.faderActionNames(master: master)
+        trace.append("fader raw \(String(format: "%.2f", info.raw)) (\(info.min)...\(info.max)), settable=\(info.settable), level '\(startText)', actions [\(actions.joined(separator: ","))]")
+        if abs(level - target) <= 0.15 {
+            return .success("\(label) volume is already '\(startText)' (target \(target) dB)")
+        }
 
-        var low = info.min
-        var high = info.max
-        var bestRaw = info.raw
-        var bestError = Double.infinity
-        var lastRaw = Double.nan
+        // 1. Pick a stepping method: one probe step each, read back.
+        var methods: [FaderStepMethod] = []
+        if actions.contains("AXIncrement") && actions.contains("AXDecrement") { methods.append(.action) }
+        if info.settable {
+            methods.append(contentsOf: [.delta(1), .delta(2), .delta(5), .delta(10)])
+        }
+        var chosen: FaderStepMethod?
         var steps = 0
-        while steps < 14 {
-            steps += 1
-            let mid = (low + high) / 2
-            if mid == lastRaw { break }
-            lastRaw = mid
-            guard AXLogicProElements.setFaderRaw(master: master, raw: mid) else {
-                return .error("Setting the fader of \(label) failed at raw \(mid). Trace: \(trace.joined(separator: "; "))")
+        var lastText = startText
+        for method in methods {
+            let direction = target > level ? 1 : -1
+            let probe = AXLogicProElements.stepFaderBatch(master: master, method: method, direction: direction, target: target, maxSteps: 1)
+            steps += probe.steps
+            guard await FilePanelAutomation.pause(ms: 40) else { return .error("Cancelled") }
+            guard let newLevel = probe.level, probe.stop != "unreadable", probe.stop != "failed" else {
+                trace.append("probe \(method.label): \(probe.stop)")
+                continue
             }
-            guard await FilePanelAutomation.pause(ms: 120) else { return .error("Cancelled") }
-            let text = AXLogicProElements.faderLevelText(master: master)
-            trace.append("raw \(String(format: "%.2f", mid)) -> '\(text ?? "?")'")
-            guard let text, let level = ComposeSupport.parseDecibels(text) else {
-                return .error("The level text of \(label) is unreadable after setting raw \(mid). Trace: \(trace.joined(separator: "; "))")
+            let moved = direction > 0 ? newLevel > level + 0.001 : newLevel < level - 0.001
+            trace.append("probe \(method.label) \(direction > 0 ? "up" : "down"): \(String(format: "%.1f", level)) -> \(probe.lastText ?? "?") (\(moved ? "moved" : "no move in the wanted direction"))")
+            level = newLevel
+            if let text = probe.lastText { lastText = text }
+            if moved {
+                chosen = method
+                break
             }
-            let distance = abs(level - target)
-            if distance < bestError {
-                bestError = distance
-                bestRaw = mid
-            }
-            if distance <= 0.15 { break }
-            if level < target { low = mid } else { high = mid }
         }
 
-        // Make sure the best value is the one that stays set, then read it back.
-        if lastRaw != bestRaw {
-            _ = AXLogicProElements.setFaderRaw(master: master, raw: bestRaw)
-            guard await FilePanelAutomation.pause(ms: 120) else { return .error("Cancelled") }
-            trace.append("restored best raw \(String(format: "%.2f", bestRaw))")
+        // 2. Repeat the chosen method.
+        var reversals = 0
+        var stop = "no method"
+        if let method = chosen {
+            let started = Date()
+            var direction = target > level ? 1 : -1
+            stop = "limit"
+            while steps < 700 {
+                if Date().timeIntervalSince(started) > 25 { stop = "time limit (25 s)"; break }
+                let diff = target - level
+                if abs(diff) <= 0.15 { stop = "target"; break }
+                let wanted = diff > 0 ? 1 : -1
+                if wanted != direction {
+                    reversals += 1
+                    if reversals > 4 { stop = "too many reversals"; break }
+                    direction = wanted
+                }
+                let batch = AXLogicProElements.stepFaderBatch(
+                    master: master, method: method, direction: direction, target: target, maxSteps: Swift.min(12, 700 - steps))
+                steps += batch.steps
+                if let text = batch.lastText { lastText = text }
+                if let newLevel = batch.level { level = newLevel }
+                if batch.stop == "unreadable" || batch.stop == "failed" {
+                    stop = batch.stop
+                    break
+                }
+                if batch.stop == "stalled" {
+                    stop = "stalled (the level did not change)"
+                    break
+                }
+                guard await FilePanelAutomation.pause(ms: 5) else { return .error("Cancelled") }
+            }
+            trace.append("stepping with \(method.label): \(steps) step(s), \(reversals) reversal(s), stopped: \(stop), last '\(lastText)'")
+        } else if AXLogicProElements.faderLevelFieldSettable(master: master) {
+            // 3. Last resort: write the level text.
+            let text = ComposeSupport.formatDecibels(target, like: startText)
+            let outcome = AXLogicProElements.setFaderLevelText(master: master, text: text)
+            trace.append("no stepping method moved the fader; level text set to '\(text)': write \(outcome.set ? "ok" : "failed"), confirm \(outcome.confirmed ? "ok" : "failed")")
+            guard await FilePanelAutomation.pause(ms: 300) else { return .error("Cancelled") }
+            stop = "level text"
+        } else {
+            trace.append("no stepping method moved the fader in the wanted direction and the level text is not settable")
         }
+
+        // 4. Final read-back.
         let finalText = AXLogicProElements.faderLevelText(master: master)
         let finalDb = finalText.flatMap { ComposeSupport.parseDecibels($0) }
-        let finalRaw = AXLogicProElements.faderInfo(master: master)?.raw ?? bestRaw
-        let summary = "\(label) volume: target \(target) dB, now '\(finalText ?? "?")' (raw \(String(format: "%.2f", finalRaw)), \(steps) step(s))"
+        let methodText = chosen.map { $0.label } ?? stop
+        let summary = "\(label) volume: target \(target) dB, now '\(finalText ?? "?")' (start '\(startText)', method \(methodText), \(steps) step(s))"
         if let finalDb, abs(finalDb - target) <= 0.3 {
-            return .success("\(summary). Trace: \(trace.joined(separator: "; "))")
+            return .success("\(summary). Trace: \(traceText())")
         }
-        return .unverified("\(summary), not within 0.3 dB of the target. Trace: \(trace.joined(separator: "; "))")
+        return .error("\(summary), not within 0.3 dB of the target. Trace: \(traceText())")
     }
 }

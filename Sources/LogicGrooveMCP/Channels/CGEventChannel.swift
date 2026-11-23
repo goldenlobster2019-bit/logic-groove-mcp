@@ -207,7 +207,22 @@ actor CGEventChannel: Channel {
             return .error("Could not bring Logic Pro to the front; it would discard the keystroke")
         }
 
-        let sent = postKeyEvent(keyCode: shortcut.keyCode, flags: shortcut.flags, pid: pid)
+        // Edit shortcuts (cut, copy, paste, undo, ...) go through the HID event tap to the frontmost app,
+        // which is Logic Pro at this point (ensureFrontmost above); a short settle lets the activation land.
+        let sent: Bool
+        if operation.hasPrefix("edit.") {
+            do {
+                try await Task.sleep(for: .milliseconds(80))
+            } catch {
+                return .error("Cancelled before posting the \(operation) shortcut")
+            }
+            guard ProcessUtils.isLogicProFrontmost else {
+                return .error("Logic Pro is not frontmost; the \(operation) shortcut was not sent")
+            }
+            sent = FilePanelAutomation.postKeyGlobal(shortcut.keyCode, flags: shortcut.flags)
+        } else {
+            sent = postKeyEvent(keyCode: shortcut.keyCode, flags: shortcut.flags, pid: pid)
+        }
         if sent {
             return .unverified("Keyboard shortcut posted for \(operation); Logic outcome is not verified")
         } else {

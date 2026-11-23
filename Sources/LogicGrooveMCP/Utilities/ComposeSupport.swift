@@ -85,6 +85,83 @@ enum ComposeSupport {
         return left == right
     }
 
+    /// Folder for the sound bank manifests: ~/Music/LogicGrooveMCP (not created here).
+    static func soundsDirectory() -> URL {
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        return home.appendingPathComponent("Music/LogicGrooveMCP", isDirectory: true)
+    }
+
+    /// Manifest of the installed MIDI Programs bank of a synth: ~/Music/LogicGrooveMCP/<plugin>-bank.json.
+    static func soundBankManifestURL(plugin: String) -> URL {
+        soundsDirectory().appendingPathComponent("\(plugin)-bank.json", isDirectory: false)
+    }
+
+    /// System-wide ("local") u-he preset root of a plug-in: /Library/Audio/Presets/u-he/<plugin>.
+    static func uheLocalRoot(plugin: String) -> URL {
+        URL(fileURLWithPath: "/Library/Audio/Presets/u-he", isDirectory: true)
+            .appendingPathComponent(plugin, isDirectory: true)
+    }
+
+    /// Per-user u-he preset root of a plug-in: ~/Library/Audio/Presets/u-he/<plugin>.
+    static func uheUserRoot(plugin: String) -> URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Audio/Presets/u-he", isDirectory: true)
+            .appendingPathComponent(plugin, isDirectory: true)
+    }
+
+    /// The synth's MIDI Programs folder (inside the local root).
+    static func uheBankFolder(plugin: String) -> URL {
+        uheLocalRoot(plugin: plugin).appendingPathComponent("MIDI Programs", isDirectory: true)
+    }
+
+    /// A plug-in name that is safe to use as a folder name: letters, digits, space, dash, underscore,
+    /// 1-40 characters. Returns the trimmed name.
+    static func validatePluginFolderName(_ raw: String) -> Validation<String> {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .failure("plugin must not be empty") }
+        guard trimmed.count <= 40 else { return .failure("plugin must be 40 characters or fewer") }
+        for scalar in trimmed.unicodeScalars {
+            let v = scalar.value
+            let isDigit = v >= 48 && v <= 57
+            let isUpper = v >= 65 && v <= 90
+            let isLower = v >= 97 && v <= 122
+            if isDigit || isUpper || isLower || scalar == " " || scalar == "-" || scalar == "_" { continue }
+            return .failure("plugin may only contain letters, digits, space, dash and underscore")
+        }
+        return .success(trimmed)
+    }
+
+    /// A preset reference (name, "folder/name" or absolute path) that is safe to hand to the library:
+    /// 1-512 characters, no "..", no NUL, no control characters.
+    static func isSafePresetReference(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 512 else { return false }
+        guard !trimmed.contains("..") else { return false }
+        for scalar in trimmed.unicodeScalars where scalar.value < 32 || scalar.value == 127 {
+            return false
+        }
+        return true
+    }
+
+    /// True when `path` lies inside one of the `roots` (after standardizing both).
+    static func path(_ path: String, isInside roots: [URL]) -> Bool {
+        let expanded = (path as NSString).expandingTildeInPath
+        let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
+        for root in roots {
+            let rootPath = root.standardizedFileURL.path
+            if standardized == rootPath || standardized.hasPrefix(rootPath + "/") { return true }
+        }
+        return false
+    }
+
+    /// Level text the way Logic prints it, in the style of `sample` (decimal comma when the sample
+    /// uses one): (-6.0, "0,0 dB") -> "-6,0 dB"; (-6.0, "0.0 dB") -> "-6.0 dB".
+    static func formatDecibels(_ value: Double, like sample: String) -> String {
+        var text = String(format: "%.1f", value)
+        if sample.contains(",") { text = text.replacingOccurrences(of: ".", with: ",") }
+        return "\(text) dB"
+    }
+
     /// Directory for MIDI exported from Logic regions (not created here).
     static func exportsDirectory() -> URL {
         let home = URL(fileURLWithPath: NSHomeDirectory())
@@ -181,6 +258,25 @@ enum ComposeSupport {
         let w = wanted.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !a.isEmpty, !w.isEmpty else { return false }
         return a.contains(w) || w.contains(a)
+    }
+
+    /// Newest modification date among a folder and its non-hidden direct entries (nil when the folder
+    /// does not exist). Used to tell whether a MIDI Programs bank changed after Logic was launched.
+    static func newestModificationDate(in folder: URL) -> Date? {
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey]
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return nil
+        }
+        var newest: Date? = (try? folder.resourceValues(forKeys: keys))?.contentModificationDate
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])) ?? []
+        for url in urls {
+            guard let date = (try? url.resourceValues(forKeys: keys))?.contentModificationDate else { continue }
+            if let current = newest, current >= date { continue }
+            newest = date
+        }
+        return newest
     }
 
     /// Number of non-hidden entries directly inside a folder (0 when it cannot be read).
