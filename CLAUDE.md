@@ -2,7 +2,7 @@
 
 ## Purpose
 
-MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write electronic music parts (house, deep house, dub techno). Fork of koltyj/logic-pro-mcp (MIT, Kolton Jacobs), renamed and extended by Golden Lobster Studio (Sorin Gheorghita). Repo: https://github.com/goldenlobster2019-bit/logic-groove-mcp. Version 0.4.2.
+MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write electronic music parts (house, deep house, dub techno). Fork of koltyj/logic-pro-mcp (MIT, Kolton Jacobs), renamed and extended by Golden Lobster Studio (Sorin Gheorghita). Repo: https://github.com/goldenlobster2019-bit/logic-groove-mcp. Version 0.4.3.
 
 ## Structure
 
@@ -23,7 +23,7 @@ MCP server (Swift, macOS) that lets AI assistants drive Logic Pro and write elec
   - `Server/` - `LogicProServer.swift` (tool/resource registration, class name kept from upstream), `ServerConfig.swift` (name, ports, timeouts, MIDI port names).
   - `Dispatchers/` - one file per MCP tool (transport, tracks, mixer, midi, edit, navigate, project, compose, sounds, system). `SoundDispatcher.swift` = `logic_sounds`.
   - `Channels/` - `Channel.swift` (protocol, ChannelID, ChannelResult), `ChannelRouter.swift` (routing table), CoreMIDI, Accessibility (+Compose: import/export, verified track selection, plug-in insert; +Placement: region move to an existing track, cycle to regions), CGEvent, AppleScript, OSC channels, `FilePanelAutomation.swift` (open/save panel driving).
-  - `Accessibility/` - AX wrappers; `AXLogicProElements+Compose.swift` holds menu/panel/inspector/plugin finders; `AXLogicProElements+Tracks.swift` holds selection read-back, focus, window-set and strip diagnostics; `AXLogicProElements+Strip.swift` holds the structural strip reader (model, slot press, bypass, faders); `AXLogicProElements+ImportPanel.swift` holds the "Where:" / browser readers; `Channels/AccessibilityChannel+Strip.swift` holds strip, bypass and dB volume commands. `Channels/AccessibilityChannel+Tracks.swift` holds the verified mute/solo/rename/delete, `Accessibility/AXLogicProElements+TrackControls.swift` their AX readers (toggle state, header name, transport Play state, alert button, header dump); `Channels/AccessibilityChannel+Sounds.swift` holds `sound.prepare_instrument`.
+  - `Accessibility/` - AX wrappers; `AXLogicProElements+Compose.swift` holds menu/panel/inspector/plugin finders; `AXLogicProElements+Tracks.swift` holds selection read-back, focus, window-set and strip diagnostics; `AXLogicProElements+Strip.swift` holds the structural strip reader (model, slot press, bypass, faders); `AXLogicProElements+ImportPanel.swift` holds the "Where:" / browser readers; `Channels/AccessibilityChannel+Strip.swift` holds strip, bypass and dB volume commands. `Channels/AccessibilityChannel+Tracks.swift` holds the verified mute/solo/rename/delete, `Accessibility/AXLogicProElements+TrackControls.swift` their AX readers (toggle state, header name, transport Play state, alert button, header dump); `Channels/AccessibilityChannel+Sounds.swift` holds `sound.prepare_instrument`. 0.4.3: `Accessibility/AXLogicProElements+PluginWindow.swift` + `Channels/AccessibilityChannel+PluginWindow.swift` (plug-in window: open/close, settings menu, plug-in pop-ups, Controls view parameters, `debug_plugin`), `AXLogicProElements+Misc.swift` (download prompt, project window raise, Play/Stop finders), `Channels/AccessibilityChannel+Transport.swift` (AX play/stop), `AXLogicProElements+Bounce.swift` + `Channels/AccessibilityChannel+Bounce.swift` (bounce).
   - `MIDI/`, `OSC/` - CoreMIDI engine and MMC, UDP OSC client/server.
   - `State/` - cache, models, adaptive poller. `Resources/` - 7 MCP resources.
   - `Utilities/` - `StripModel.swift` (Sendable strip model, slot request parsing), `ComposeSupport.swift` (folders, file names, positions, path validation), input validation, logging, permissions, process utils.
@@ -87,6 +87,15 @@ Upstream base: bdc105e (koltyj/logic-pro-mcp, MCP SDK 0.12). Added on branch `el
     - `set_volume {db}` / `set_master_volume {db}`: stepped search (AXIncrement/AXDecrement, then AXValue deltas, then the level text field) with read-back, caps 700 steps / 25 s; integer `db` accepted (`InputValidation.looseDouble`).
     - Placement uses Cmd+X / Cmd+V key events after `ensureFrontmost()`; the cut guard ("Cut" in the Undo title) stays, the paste must show "Paste".
     - Project window test accepts "<name> - Tracks" (unsaved projects). `logic_edit` shortcuts go through the HID tap after a frontmost check. `logic_system debug_header {track}`.
+
+13. Version 0.4.3 (`de9bc95`; written after web research on dub techno sound design and Logic's stock tools; FIRST LIVE TEST PENDING for everything below):
+    - Plug-in window control on `logic_mixer`: `open_plugin`, `close_plugin`, `plugin_setting` / `set_plugin_setting {setting}` (Logic's settings menu, paths with "/"), `plugin_settings_menu`, `plugin_popups` / `set_plugin_popup {index, value}` (plug-in specific pop-ups, e.g. Drum Synth category and sound module), `plugin_params` / `set_plugin_param {param, value}` through the plug-in's Controls view (slider AXValue, then the numeric field, then AXIncrement/AXDecrement, each read back). `logic_system debug_plugin {view: controls|editor}` dumps the window. Routed as `plugin.*`.
+    - Transport: `transport.play` / `transport.stop` go through the control bar's Play checkbox and Stop button first (read back); MMC is last.
+    - `logic_project bounce {path?}`: File > Bounce > Project or Section, Offline when available, save panel, waits for the file (default `~/Music/LogicGrooveMCP/Bounces`). Best effort, the trace dumps the dialog's controls. Range not applied yet.
+    - `AXLogicProElements.dismissDownloadPrompt()` (Cancel on the "requires additional content" dialog) in the import flow, `selectTrackVerified`, plug-in window commands, track creation and bounce.
+    - Project-window finders use `projectWindow() ?? mainWindow()`.
+    - `setFaderDb` accepts the nearest fader step; `insertPlugin` re-reads the strip before reporting "no new window"; the strip model reports `sends` separately; `create_*` tracks are verified by the header count and routed to accessibility only.
+    - `logic_sounds`: compact text for `presets` and `bank` (`format: "json"` for the old output), `preset_info`, `verify {track, preset}`; `set_preset` no longer sends MIDI and explains the `program` mechanism.
 
 ## Verified on a real Mac (Logic Pro 11, 2026-10-18)
 
@@ -199,6 +208,15 @@ BROKEN (fix in 0.4.3):
 - `logic_sounds presets` needs a compact output and should return Description / Usage (the drum presets do not say which key to play; C2 kick, C4 hat, C3 clap were guesses).
 - Diva's demo notice appears on new instances; it did not block program changes.
 
+## Sound design notes (web research 2026-11-23, after the user called the first Diva track "a joke")
+
+User constraints: no purchases. Logic's stock plug-ins plus the Diva DEMO (it adds vinyl-like crackles now and then, says its own notice); free extras are welcome when linked. Installed by the user on 2026-11-23: Sound7 "Free House Vol. 1" for Diva (folder `SOUND7 - Free House Vol. 1`: 10 "CHORD - Ians ..." one-key chord presets, 4 basses, 2 pads, leads, arps, FX; bank programs 53-69) and Valhalla Supermassive + Freq Echo (free AU reverb / delay).
+
+- Drums: Logic's Drum Synth (stock, synthesized, no content download; verified live: loads as an instrument, default "Kicks > Heavy Kick", knobs Pitch, Tone, Saturation, Shape, Sweep, Decay, Volume, Key Tracking, Mode). One instance = one drum; categories Kicks, Snares and Claps, Percussion, Hats and Cymbals. Its two pop-ups are AX `AXPopUpButton`s. Diva has almost no usable drum presets (one hi-hat, two claps); do not build drums from Diva again. Sample kits (Drum Machine Designer / Electronic Drum Kit patches) need the free Sound Library download (Logic Pro > Sound Library > Open Sound Library Manager; the full library is about 72 GB, pick packs).
+- Dub techno chord (Attack Magazine "Dub Techno Synth Chords", done in Diva itself): Jupe-6 init, noise on VCO 1, saw + square on VCO 2, filter with slow LFO movement, short amp envelope, phaser, plate reverb with low wet; then EQ (about -7 dB at 600 Hz wide, cut above ~4.5 kHz and below ~100 Hz), tape echo, and on a send a 1/8 dotted delay (feedback ~20 %) plus a free-running ~264 ms delay with high feedback (~85 %), high-passed around 280 Hz. Other sources agree: minor chord, dotted delay times, spring/plate reverb, band-pass around 450 Hz with a slow LFO, sidechain compression from the kick, vinyl noise; beat = four-on-the-floor kick, off-beat open hat, clap/snare on 2 and 4 kept thin (low cut ~150 Hz), short sub that ducks under the kick.
+- Every Logic plug-in has a "Controls" view (plug-in window View menu) that shows all parameters as sliders with numeric fields and is the documented VoiceOver-accessible view: that is how parameters are set without the custom UI (0.4.3 `set_plugin_param`).
+- Never judge a mix blind again: bounce (`logic_project bounce`), stage the file and analyse it (kick fundamental, spectral balance, levels) before telling the user it is ready.
+
 ## Sound assignment, learned by hand on 2026-11-22 (not yet in the server)
 
 - `logic_mixer insert_plugin` FAILS on the instrument slot: "Could not open the slot menu (neither AXShowMenu nor AXPress worked on AXButton[title=, desc=list])". An AXPress on that same `list` button from another tool does open the menu, so the press works but the server does not find the opened menu.
@@ -225,6 +243,7 @@ BROKEN (fix in 0.4.3):
 - Live runs 2026-11-22 (0.3.1 flow): the Go to typing landed once and failed twice (field had 0 chars) when the field was pre-filled with the previous path; the Go to sheet remembers the last path system-wide. Return on an empty or mismatched field closes the whole panel without importing. File rows are not exposed through AX in column view (`AXBrowser` > empty `AXScrollArea`s), so `selectFileInPanel` cannot work there. The Edit menu Undo title flips between "Can't Undo" and "Undo" without any import and is not usable as a signal. The Go To Position dialog check works. Logic creates a new track named after the default patch for every imported MIDI file and asks a tempo question that is answered "No".
 
 - 0.4.2 assumptions still unverified (the Program Change, track-name and bank-folder questions are answered in the 2026-11-23 afternoon section): Shift+Return opens the inline track name editor; plain M / S toggle mute / solo of the selected track; Cmd+Delete deletes the selected track and the confirmation alert has "Delete" and "Cancel" buttons; the Undo title contains "Cut" / "Paste" after Cmd+X / Cmd+V; the fader slider offers AXIncrement / AXDecrement; the header toggle AXValue reads as number, "1" or "true"; Logic counts only NOTES when it drops leading empty bars (a CC or Program Change at tick 0 with later notes is untested).
+- 0.4.3 assumptions, all unverified: the Controls view exposes `AXSlider`s with min/max and a label reachable as title, description or a neighbouring static text; a pop-up's open menu is an `AXMenu` child (or an open app menu) whose `AXMenuItem`s can be pressed, submenus included; the view menu has items titled "Controls" and "Editor"; the strip's `open` button opens the plug-in window, which is identified by the static text holding the plug-in name; the Bounce dialog's window title starts with "Bounce", it has an "Offline" control and a "Bounce"/"OK" button, and its save panel matches `strictFilePanel()`; sends are labelled "Bus N". Run `logic_system debug_plugin` and read the bounce trace first.
 - Menu titles are matched in English (Logic Pro 11); other languages or versions untested.
 - File panels in a sandboxed Logic (Cmd+Shift+G go-to-folder, save name field, replace alert) are unverified.
 - Go To Position expects the format `N.1.1.1`; result is `.unverified`, so import placement at the playhead is not read back.
@@ -251,7 +270,9 @@ BROKEN (fix in 0.4.3):
 - Synth presets are chosen without the plug-in UI: a curated bank in the synth's `MIDI Programs` folder plus a Program Change INSIDE the part's region (`program` on `logic_compose write`), confirmed by the track name. A live Program Change does not reach the plug-in in Logic. Keep the first note of a clip off the very first tick so it does not collide with the preset load.
 - The server only ever removes or overwrites bank files it wrote itself (manifest); foreign presets in `MIDI Programs` stay.
 - `at_bar` is the position of bar 1 of the clip, not of the first note.
-- House / dub techno drums are built from the synth's percussive presets, one voice per track (kick, hats, clap), written as pitched notes; the Ultrabeat init kit is not good enough (user feedback 2026-11-23).
+- House / dub techno drums are built from Logic's Drum Synth, one instance per drum (kick, hats, clap), sound chosen with `set_plugin_popup`; neither the Ultrabeat init kit nor Diva's percussive presets are good enough (user feedback 2026-11-23).
+- No paid sound sets or plug-ins; stock Logic plug-ins, the Diva demo and free downloads the user installs himself.
+- A result is audited from a bounce before it is presented.
 - Track mute/rename/delete count as done only after a read-back; `delete` never runs without an explicit index and a verified selection.
 - Never use Space for stop/play; use keypad 0 / Enter style keys (and MMC first).
 - Track creation goes through Track menu items first, keyboard as fallback.
