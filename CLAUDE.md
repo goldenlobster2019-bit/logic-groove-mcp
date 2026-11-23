@@ -171,6 +171,34 @@ TO IMPROVE:
 - Diva has very few real drum presets: one hi-hat (HS Top Hat) plus 3EE_Perc_HH, two claps. House drums from Diva alone will be thin; a second drum source (Logic sound library download, or a sample kit) is still worth adding.
 - Still untested: `set_preset` (does the Program Change reach Diva?), everything else in 0.4.2.
 
+## Verified on a real Mac (Logic Pro 11, 2026-11-23 afternoon, 0.4.2, first track with Diva presets)
+
+Result: 64-bar dub techno track in G minor, 7 Diva tracks, every preset loaded and confirmed by the track name; master peak -5.8 dB in the full section. Parts: Kick (BS Dust Kick, C2, bars 1-64, break 33-36), Sub (MK Bass Sub Tri, G1, 9-60), Stab (HS Stabz, Gm9, 17-56), Pad (IW Lush PWM Pad, 1-64), Hat (HS Top Hat, C4, 9-60), Clap (FMR JunoJupiter 72 Perc Sound 2, C3, 25-56), Ping (MK Sine Piano, D4, 25-56).
+
+HOW PRESETS REALLY LOAD (replaces the 0.4.2 assumption):
+- A Program Change sent LIVE through the virtual MIDI source does NOT reach Diva (notes do: `send_note` gave a peak of -10.7 dB; the Diva display stayed on "Diva 1.4.8 demo mode"). `logic_sounds set_preset` therefore does nothing useful as written.
+- A Program Change INSIDE THE REGION works: `logic_compose write {program: N}` + Diva on that track. Diva loads the bank program as soon as the region start is played OR chased (a Go To Position to a later bar is enough, no playback needed). The Diva display shows "0:29 029 HS Stabz".
+- Verification through AX exists: the track header name, the strip `track_name`, the plug-in window title and the settings pop-up all become "<bank>/<program> <file name>", e.g. "0/29 029 HS Stabz". `logic_mixer strip` returns it.
+- Side effect: Logic's MIDI import picks the NEW TRACK'S PATCH from the Program Change in the file (GM mapping): program 0 gave "Studio Grand" (Channel EQ, Compressor, ChromaVerb), 29 "British Stack Synth Lead" (Sculpture + Pedalboard, Amp, St-Delay, Channel EQ, Compressor), 19 "Wedding Organ", 41 "Violas", 6 "Harpsichord", 9 "Glockenspiel" (Channel EQ, Tape Delay, Chorus), 51 "Synth Pop Strings" (Channel EQ, Ensemble, St-Delay). The effects stay after Diva replaces the instrument: bypass the unwanted ones.
+- When that patch needs content that is not downloaded, Logic shows a small untitled AXDialog "This project requires additional content. Do you want to download it now?" (buttons Cancel / Download) right after the import. It blocks track selection ("the project window is not the focused window (AXWindow/AXDialog title='')") and goes away after the first failed `insert_plugin` attempt; the second attempt works. The server must press Cancel itself.
+
+WORKS (0.4.2):
+- `at_bar` + `leading_empty_bars`: every region landed where intended (seen in the arrange window).
+- `logic_tracks delete {index}`: "posted Cmd+Delete; pressed 'Delete' on the confirmation alert after 100 ms; headers 2 -> 1".
+- `set_volume {db}` with AXDecrement: steps are 1 dB down to about -12 dB and 2 dB below, so odd targets under -12 are unreachable and returned an error at 1 dB distance ("too many reversals"): accept the nearest step instead.
+- Arrow-key track selection on an unsaved project ("arrow Down x1 -> selected 1").
+- `bypass_plugin`, `insert_plugin` (one case reported "no new plug-in window within 5 seconds" although Tape Delay WAS inserted: verify by the strip before returning an error).
+- AXPress on the transport "Play" checkbox and "Stop" button (control bar of the project window) starts and stops playback in the background.
+
+BROKEN (fix in 0.4.3):
+- `getTrackHeaders()`, `getTransportBar()` and `getMixerArea()` use `mainWindow()`; when a plug-in window is open (`close_window: false`, or a close that failed) it is the main window and the header count reads 0: imports report "NOT confirmed (tracks 1 -> 0)" although they worked, selection fails. Use `projectWindow() ?? mainWindow()`.
+- `transport.play` / `transport.stop` report MMC success but Logic does not react to MMC here; nothing falls back. Use the AX Play / Stop controls first (so `stopIfPlaying` really stops).
+- `logic_tracks create_instrument` posts a shortcut and nothing happens when a plug-in window has the focus.
+- The strip reader lists sends ("Bus 4", "Bus 3") as effects on a track that has sends.
+- `set_preset` must be rebuilt on the region mechanism (for example a one-bar "preset" region placed on the track, or the program carried by the part's own clip) and verified by the track name; drop the live Program Change.
+- `logic_sounds presets` needs a compact output and should return Description / Usage (the drum presets do not say which key to play; C2 kick, C4 hat, C3 clap were guesses).
+- Diva's demo notice appears on new instances; it did not block program changes.
+
 ## Sound assignment, learned by hand on 2026-11-22 (not yet in the server)
 
 - `logic_mixer insert_plugin` FAILS on the instrument slot: "Could not open the slot menu (neither AXShowMenu nor AXPress worked on AXButton[title=, desc=list])". An AXPress on that same `list` button from another tool does open the menu, so the press works but the server does not find the opened menu.
@@ -196,8 +224,7 @@ TO IMPROVE:
 - Live test 2026-11-22 (Logic Pro 11): File > Import > MIDI File... opens a window (AXWindow, subrole AXDialog, title "Import", buttons Cancel and Import) whose content is hosted out of process; it opens in the last used folder and Import is disabled until a file is selected. The old flow (Cmd+Shift+G, Cmd+A, type, Return) closed the panel without importing anything while reporting `unverified`. Import now returns a trace and is `.error` unless the track count or the Edit menu Undo title changed.
 - Live runs 2026-11-22 (0.3.1 flow): the Go to typing landed once and failed twice (field had 0 chars) when the field was pre-filled with the previous path; the Go to sheet remembers the last path system-wide. Return on an empty or mismatched field closes the whole panel without importing. File rows are not exposed through AX in column view (`AXBrowser` > empty `AXScrollArea`s), so `selectFileInPanel` cannot work there. The Edit menu Undo title flips between "Can't Undo" and "Undo" without any import and is not usable as a signal. The Go To Position dialog check works. Logic creates a new track named after the default patch for every imported MIDI file and asks a tempo question that is answered "No".
 
-- 0.4.2 assumptions, all unverified: Logic passes a Program Change from the virtual MIDI source (and from a region) to the instrument plug-in of the selected track; Diva renames the track when a program loads (only basis for `verified: true` in `set_preset`); `/Library/Audio/Presets/u-he/Diva/MIDI Programs` is writable by the user; Shift+Return opens the inline track name editor; plain M / S toggle mute / solo of the selected track; Cmd+Delete deletes the selected track and the confirmation alert has "Delete" and "Cancel" buttons; the Undo title contains "Cut" / "Paste" after Cmd+X / Cmd+V; the fader slider offers AXIncrement / AXDecrement; the header toggle AXValue reads as number, "1" or "true"; Logic counts only NOTES when it drops leading empty bars (a CC or Program Change at tick 0 with later notes is untested).
-- If Program Change does not reach Diva in Logic, plan B is driving Diva's own preset browser from the server (clicks inside the plug-in window only).
+- 0.4.2 assumptions still unverified (the Program Change, track-name and bank-folder questions are answered in the 2026-11-23 afternoon section): Shift+Return opens the inline track name editor; plain M / S toggle mute / solo of the selected track; Cmd+Delete deletes the selected track and the confirmation alert has "Delete" and "Cancel" buttons; the Undo title contains "Cut" / "Paste" after Cmd+X / Cmd+V; the fader slider offers AXIncrement / AXDecrement; the header toggle AXValue reads as number, "1" or "true"; Logic counts only NOTES when it drops leading empty bars (a CC or Program Change at tick 0 with later notes is untested).
 - Menu titles are matched in English (Logic Pro 11); other languages or versions untested.
 - File panels in a sandboxed Logic (Cmd+Shift+G go-to-folder, save name field, replace alert) are unverified.
 - Go To Position expects the format `N.1.1.1`; result is `.unverified`, so import placement at the playhead is not read back.
@@ -221,7 +248,7 @@ TO IMPROVE:
 - Levels are read from the strip's peak meter titles (`logic_mixer strip`); after building a loop, bring the master peak below 0 dB with `set_volume {db}`.
 - A plug-in is never inserted unless the target track selection was read back.
 
-- Synth presets are chosen without the plug-in UI: a curated bank in the synth's `MIDI Programs` folder plus a live Program Change on the verified-selected track (the preset is then saved with the project). `program` inside a clip is kept for special cases only, because it reloads the preset every time the cycle passes the region start.
+- Synth presets are chosen without the plug-in UI: a curated bank in the synth's `MIDI Programs` folder plus a Program Change INSIDE the part's region (`program` on `logic_compose write`), confirmed by the track name. A live Program Change does not reach the plug-in in Logic. Keep the first note of a clip off the very first tick so it does not collide with the preset load.
 - The server only ever removes or overwrites bank files it wrote itself (manifest); foreign presets in `MIDI Programs` stay.
 - `at_bar` is the position of bar 1 of the clip, not of the first note.
 - House / dub techno drums are built from the synth's percussive presets, one voice per track (kick, hats, clap), written as pitched notes; the Ultrabeat init kit is not good enough (user feedback 2026-11-23).
