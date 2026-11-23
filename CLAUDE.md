@@ -115,6 +115,25 @@ FAILED:
 - `insert_plugin {slot: 1, name: "Tape Delay"}` REPLACED the existing first effect (Channel EQ) instead of adding one (fixed in 0.4.1, untested: structural slots).
 - `logic_compose import_midi` failed twice, safely (Return was not pressed): after Cmd+A and typing, the focus was no longer a non-search text field (`B attempt 1: field has 0 chars; B attempt 2: focus is not the go-to field`). Typing into the Go to sheet is unreliable and the sheet's memory is overwritten whenever the user uses a Go to sheet in any other app (fixed in 0.4.1, untested: strategy K and paste).
 
+## Verified on a real Mac (Logic Pro 11, 2026-11-23 morning, 0.4.1, new "Untitled" project)
+
+WORKS:
+- Import strategy K (no typing): `K Where='Import', 1 file in the staging folder; K AXBrowser: AXFocused set; K after Right: button enabled:Import; K pressed 'Import'`. It worked on the first import only; on the next two the button stayed disabled after Right and Down (the panel reopens in a different focus state), and strategy B took over.
+- Import strategy B with paste: `B paste: field has 59 chars, matches=true`, and on the following import `B prefill already matches; not typing`. Three imports out of three succeeded.
+- `insert_plugin`: instrument (`Diva`, `Ultrabeat`) and a NEW effect (`Tape Delay` without `slot`: chain `Diva | Channel EQ, Compressor, ChromaVerb, Tape Delay`, undo title "Undo Insert Plug-in in Channel Strip"). The structural check and the `chain:` text are correct.
+- `logic_mixer strip` returns the right model; `bypass_plugin {plugin: "Compressor", bypassed: true}` worked with read-back.
+- `kit: "ultrabeat_init"` maps the drum names correctly; `logic_transport cycle_to_regions` selects the regions and enables the cycle (confirmed visually: cycle on bars 1-5).
+- Track selection: the header holds an `AXRadioButton 'Has Focus'`; the last-resort click on the number column works (`click at (3883,314) posted -> selected 1`).
+
+BROKEN (to fix in 0.4.2):
+- Placement (`track` param): `Edit > Cut` pressed through AX did NOT cut (undo title stayed "Undo Import"), so the safety stopped it. A Cmd+X key event posted while Logic was frontmost DID cut ("Undo Cut"). A later Cmd+V posted while the Claude app was frontmost did nothing. Key commands only work when Logic is frontmost, and Edit menu items pressed through AX are unreliable; use key events after `ensureFrontmost()`.
+- The Edit menu Undo title is only meaningful while Logic is frontmost (it reads plain "Undo" / "Can't Undo" in the background). Read it right after an action inside a flow that brought Logic to the front.
+- Arrow-key track selection is skipped on an unsaved project: "the project window is not the focused window (title='Untitled - Tracks')". The project-window test must accept "<name> - Tracks" without ".logicx".
+- `set_volume {db}`: setting the fader's AXValue does not jump to the value; every set moves the fader by one small step (about 0.1 dB down per call), whatever value is passed, so the bisection ended at -1.4 dB after 14 steps. The fader has to be stepped (AXIncrement / AXDecrement or repeated sets) until the level text reaches the target.
+- `set_volume {db: -6}` with an integer was routed to the old `value` path ("Missing 'index' or 'value' parameter"); only a float (-6.5) reached the dB code.
+- `logic_edit` shortcuts (cut, paste, ...) are posted without bringing Logic to the front first.
+- Still missing: choosing a Diva preset without its custom UI (every new Diva instance plays the init sound), and setting plug-in parameters.
+
 ## Sound assignment, learned by hand on 2026-11-22 (not yet in the server)
 
 - `logic_mixer insert_plugin` FAILS on the instrument slot: "Could not open the slot menu (neither AXShowMenu nor AXPress worked on AXButton[title=, desc=list])". An AXPress on that same `list` button from another tool does open the menu, so the press works but the server does not find the opened menu.
