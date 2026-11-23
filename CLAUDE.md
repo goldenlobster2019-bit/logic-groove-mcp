@@ -258,6 +258,7 @@ Learned in this run:
 - `bank_install` returns the whole bank as pretty JSON (about 400 lines): needs the compact output too.
 - The user works in Logic while the agent does: playback started by the agent was stopped twice and the selection changed. Announce playback, keep it short.
 - Background screenshots of Logic (`computer_app_screenshot` on com.apple.logic10) need a fresh access grant after every Claude restart; ask once at the start of a session.
+- MISTAKE, user feedback 18:58: Tape Delay "Feedback" raw value IS the percentage (0..200 %). Raw 125 = 125 % = a self-oscillating delay that howls on after Stop ("microfonie"). Never write a delay feedback above 70; `set_plugin_param` should refuse feedback-like parameters above 100 % unless forced. Set back to 40. The user also said "HS Plucksoft" (program 38) sounds terrible in this role and muted track 4: do not use it for dub chords or echo ticks.
 
 ## Sound design notes (web research 2026-11-23, after the user called the first Diva track "a joke")
 
