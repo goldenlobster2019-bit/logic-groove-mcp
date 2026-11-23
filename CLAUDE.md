@@ -208,6 +208,23 @@ BROKEN (fix in 0.4.3):
 - `logic_sounds presets` needs a compact output and should return Description / Usage (the drum presets do not say which key to play; C2 kick, C4 hat, C3 clap were guesses).
 - Diva's demo notice appears on new instances; it did not block program changes.
 
+## Verified on a real Mac (Logic Pro 11, 2026-11-23 late afternoon, 0.4.3, second track: Drum Synth + Diva)
+
+WORKS (all on the first live run):
+- `open_plugin` / `close_plugin`, the view switch to "Controls" and back, `debug_plugin`, `plugin_params`, `set_plugin_param {raw: true}` (ChromaVerb Wet 30 -> 36), `plugin_settings_menu` (with `path`), `set_plugin_setting` with a "Folder/Setting" path, `set_plugin_popup`, `logic_sounds verify`, `transport.play` / `stop` through AX ("playing (AXPress on Play, confirmed after 100 ms)"), fader nearest step, download prompt handling, selection with a plug-in window open.
+- Controls view structure: `AXScrollArea > AXTable > AXRow > AXCell` with `AXStaticText value='<Label>:'`, then for a continuous parameter an `AXGroup` whose VALUE is the displayed text ("30.2 %", "0 dB") holding one `AXSlider`, plus a second sibling `AXSlider` with the same raw value (both settable); pop-ups are `AXPopUpButton`s in the row, switches `AXCheckBox` (value not settable). Raw ranges are integers (Drum Synth Pitch 0..48 with 24 = 0, percentages 0..1000, Tape Delay Feedback 0..200, ChromaVerb Wet 0..100).
+- Drum Synth: sound modules Kicks (Heavy, Hard, Punch, Air, Tight), Hats and Cymbals (Crash Cymbal, Ride Cymbal, Smooth Hi-Hat, Sharp Hi-Hat, Bell Cymbal), Snares and Claps (Snappy Snare, Air Snare, Electronic Snare, Mechanical Clap, Synthetic Side Stick, Gritty Snare, Silicon Side Stick, Human Clap). Factory SETTINGS (settings menu folders Kicks, Hats and Cymbals, Percussion, Snares and Claps), e.g. Kicks: Deep Kick, Low Warm Kick, Solid Kick, Subdued Kick, Muffled Punch, Clicky Sub Kick...; Hats: Smooth / Tight / Brushed / Micro / Metallic / Fizzy / Gritty Hi-Hat, Tight Trap Hat...; Claps: Classic, Clean, Crushed, Human, Lo-Fi, Mechanical, Tight Clap, Side Stick...; Percussion: Shaker, Tight Shaker, Rain Shaker, Lo-Fi Shaker, toms, Soft Tuned Perc...
+- Tape Delay factory settings: "1\8 Note Dotted Dub", "1\8 Note Dotted", "Ultra Dub", "1\4 Note Dotted", "1\16 Note Slap"... (titles use a backslash). ChromaVerb folders: Ambiences, Chambers, FX, Halls, Rooms, Spaces, Synth Reverbs (Big Synth Hall: Dry 70, Wet 30, Decay 3.2 s; Generic Synth Hall, Trance Space...).
+- Track built (new "Untitled" project, 64 bars, G minor, 120 BPM): 1 Kick = Drum Synth "Deep Kick" (C1 notes), 2 Hat = Drum Synth "Smooth Hi-Hat" off-beat (9-64), 3 Clap = Drum Synth "Clean Clap" (17-60, break 33-36), 4 Sub = Diva MK Bass Sub Tri (9-60), 5 Chord = Diva HS Stabz Gm7/Gm9 + Tape Delay "1\8 Note Dotted Dub" + ChromaVerb "Big Synth Hall" (17-60), 6 Pad = Diva IW Lush PWM Pad (1-64). Faders: kick -1, hat -14, clap -12, sub -6, chord -2, pad -18. Peaks at bar 41: master -3.6 dB, chord -14.3, sub about -11.
+
+TO FIX / OPEN:
+- `plugin_params` lists every parameter twice (one line has the value text, the other the label): merge per table row (label from the static text, text from the group value) and expose pop-ups and checkboxes of the Controls view as parameters too (set by menu / AXPress).
+- Never send two plug-in window commands in parallel: one of them fails ("The menu did not open").
+- `logic_project bounce` is UNTESTED: the user interrupted the first call and the next one was refused by the permission layer. Ask the user before trying again. Until then levels come from the peak meters only and nothing about tone is verified.
+- Drum Synth root key is assumed to be C1 with Key Tracking on (kick, hat and clap were written on C1): unverified without audio.
+- The Sound7 chord presets (programs 53-69) and the Valhalla plug-ins need a Logic restart before they can be used; this track uses programs 0-52 only.
+- Each plug-in window command opens and closes the window, visible to the user; batch several changes with `keep_open`.
+
 ## Sound design notes (web research 2026-11-23, after the user called the first Diva track "a joke")
 
 User constraints: no purchases. Logic's stock plug-ins plus the Diva DEMO (it adds vinyl-like crackles now and then, says its own notice); free extras are welcome when linked. Installed by the user on 2026-11-23: Sound7 "Free House Vol. 1" for Diva (folder `SOUND7 - Free House Vol. 1`: 10 "CHORD - Ians ..." one-key chord presets, 4 basses, 2 pads, leads, arps, FX; bank programs 53-69) and Valhalla Supermassive + Freq Echo (free AU reverb / delay).
